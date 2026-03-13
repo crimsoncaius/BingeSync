@@ -11,6 +11,14 @@ export interface FoodOption {
   addedBy: string
 }
 
+export interface PlaceSearchResult {
+  id: string
+  name: string
+  formattedAddress?: string
+  rating?: number
+  googleMapsUri?: string
+}
+
 export interface RankedResult {
   optionId: string
   name: string
@@ -99,6 +107,11 @@ export function addOption(sessionId: string, participantId: string, name: string
     method: 'POST',
     body: JSON.stringify({ participantId, name }),
   })
+}
+
+export function searchPlaces(query: string) {
+  const params = new URLSearchParams({ query: query.trim() })
+  return request<PlaceSearchResult[]>(`/places/search?${params.toString()}`)
 }
 
 export function submitRatings(

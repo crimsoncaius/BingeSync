@@ -6,8 +6,10 @@ import {
   fetchResults,
   fetchSession,
   joinSession,
+  searchPlaces,
   streamPlaceSuggestions,
   submitRatings,
+  type PlaceSearchResult,
   type RankedResult,
   type SessionResponse,
 } from './api'
@@ -70,6 +72,9 @@ export default function App() {
   const [userNameInput, setUserNameInput] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [optionInput, setOptionInput] = useState('')
+  const [placeSearchInput, setPlaceSearchInput] = useState('')
+  const [placeResults, setPlaceResults] = useState<PlaceSearchResult[]>([])
+  const [searchingPlaces, setSearchingPlaces] = useState(false)
   const [suggestionPrompt, setSuggestionPrompt] = useState('')
   const [ratings, setRatings] = useState<Record<string, number>>({})
   const [results, setResults] = useState<RankedResult[]>([])
@@ -258,6 +263,9 @@ export default function App() {
     setUserNameInput('')
     setJoinCodeInput('')
     setOptionInput('')
+    setPlaceSearchInput('')
+    setPlaceResults([])
+    setSearchingPlaces(false)
     setSuggestionPrompt('')
     setRatings({})
     setResults([])
@@ -347,6 +355,38 @@ export default function App() {
       setError(
         suggestionError instanceof Error ? suggestionError.message : 'Could not add suggested place',
       )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePlaceSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    try {
+      setSearchingPlaces(true)
+      setError('')
+      const nextResults = await searchPlaces(placeSearchInput)
+      setPlaceResults(nextResults)
+    } catch (placeError) {
+      setError(placeError instanceof Error ? placeError.message : 'Could not search Google Places')
+    } finally {
+      setSearchingPlaces(false)
+    }
+  }
+
+  async function handleAddPlaceResult(place: PlaceSearchResult) {
+    if (!session || !participantId) {
+      return
+    }
+
+    try {
+      setBusy(true)
+      setError('')
+      const nextSession = await addOption(session.sessionId, participantId, place.name)
+      setSession(nextSession)
+    } catch (addPlaceError) {
+      setError(addPlaceError instanceof Error ? addPlaceError.message : 'Could not add place result')
     } finally {
       setBusy(false)
     }
@@ -464,7 +504,7 @@ export default function App() {
             <div className="panel-header">
               <div>
                 <h2>Add food options</h2>
-                <p>Keep it simple for v1: dishes, takeout categories, or restaurant names.</p>
+                <p>Add your own idea or search Google Places for real restaurants nearby.</p>
               </div>
               <span className="pill">{session.options.length} options</span>
             </div>
@@ -492,6 +532,62 @@ export default function App() {
                 ))
               )}
             </div>
+
+            <form className="place-search-form" onSubmit={handlePlaceSearch}>
+              <div>
+                <h3>Search real places</h3>
+                <p className="muted">
+                  Pull in real restaurant options from Google Places, then add the best match.
+                </p>
+              </div>
+              <div className="stream-controls">
+                <input
+                  onChange={(event) => setPlaceSearchInput(event.target.value)}
+                  placeholder="Search restaurants, sushi near me, taco places..."
+                  value={placeSearchInput}
+                />
+                <button
+                  className="secondary-button"
+                  disabled={searchingPlaces || placeSearchInput.trim().length < 2}
+                >
+                  {searchingPlaces ? 'Searching...' : 'Search Places'}
+                </button>
+              </div>
+            </form>
+
+            {placeResults.length > 0 ? (
+              <div className="suggestion-list">
+                {placeResults.map((place) => (
+                  <article className="suggestion-card" key={place.id}>
+                    <div className="place-result-copy">
+                      <p>{place.name}</p>
+                      {place.formattedAddress ? <small>{place.formattedAddress}</small> : null}
+                      {place.rating ? <small>Google rating: {place.rating.toFixed(1)}</small> : null}
+                    </div>
+                    <div className="place-result-actions">
+                      {place.googleMapsUri ? (
+                        <a
+                          className="ghost-link"
+                          href={place.googleMapsUri}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          View map
+                        </a>
+                      ) : null}
+                      <button
+                        className="secondary-button"
+                        disabled={busy}
+                        onClick={() => handleAddPlaceResult(place)}
+                        type="button"
+                      >
+                        Add to options
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <section className="panel">

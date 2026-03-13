@@ -135,7 +135,8 @@ dt {
 }
 
 .join-form,
-.option-form {
+.option-form,
+.place-search-form {
   display: grid;
   gap: 10px;
 }
@@ -281,12 +282,36 @@ input:focus {
   margin-top: 16px;
 }
 
+.place-search-form {
+  margin-top: 18px;
+}
+
 .suggestion-card {
   align-items: flex-start;
 }
 
 .suggestion-card p {
   flex: 1;
+}
+
+.place-result-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.place-result-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.ghost-link {
+  color: #8db4ff;
+  text-decoration: none;
+}
+
+.ghost-link:hover {
+  text-decoration: underline;
 }
 
 .result-rank {
@@ -335,7 +360,8 @@ dd {
   .result-card,
   .rating-row,
   .option-form,
-  .suggestion-card {
+  .suggestion-card,
+  .place-result-actions {
     flex-direction: column;
   }
 
