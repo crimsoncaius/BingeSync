@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Literal
+from typing import AsyncIterator, Literal
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from app.settings import settings
 
@@ -47,11 +50,12 @@ class SessionCreateResponse(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    pass
+    name: str | None = Field(default=None, max_length=40)
 
 
 class JoinSessionRequest(BaseModel):
     joinCode: str = Field(min_length=JOIN_CODE_LENGTH, max_length=JOIN_CODE_LENGTH)
+    name: str | None = Field(default=None, max_length=40)
 
 
 class AddOptionRequest(BaseModel):
@@ -67,6 +71,12 @@ class RatingEntry(BaseModel):
 class SubmitRatingsRequest(BaseModel):
     participantId: str
     ratings: list[RatingEntry]
+
+
+class SuggestionStreamRequest(BaseModel):
+    participantId: str
+    vibe: str | None = Field(default=None, max_length=140)
+    count: int = Field(default=6, ge=3, le=10)
 
 
 class RankedResult(BaseModel):
@@ -115,6 +125,14 @@ STORE_LOCK = Lock()
 
 def normalize_name(value: str) -> str:
     return " ".join(value.lower().split())
+
+
+def clean_display_name(value: str | None, fallback: str) -> str:
+    if value is None:
+        return fallback
+
+    cleaned = " ".join(value.split())
+    return cleaned[:40] if cleaned else fallback
 
 
 def now_utc() -> datetime:
@@ -218,6 +236,132 @@ def compute_results(session: SessionRecord) -> list[RankedResult]:
     )
 
 
+def sse_message(event: str, payload: dict[str, object]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+def build_suggestion_messages(session: SessionRecord, payload: SuggestionStreamRequest) -> list[dict[str, str]]:
+    participant = next(
+        (entry for entry in session.participants if entry.id == payload.participantId),
+        None,
+    )
+    participant_label = participant.label if participant else "Current user"
+    current_options = ", ".join(option.name for option in session.options) or "No current options yet"
+    other_preferences = []
+
+    for entry in session.participants:
+        if entry.id == payload.participantId:
+            continue
+
+        ratings = session.ratings.get(entry.id, {})
+        liked_options = [
+            option.name
+            for option in session.options
+            if ratings.get(option.id, 0) >= 7
+        ]
+        if liked_options:
+            other_preferences.append(f"{entry.label} currently likes: {', '.join(liked_options)}")
+
+    vibe_note = payload.vibe.strip() if payload.vibe else "No extra vibe provided"
+    collaborator_context = "\n".join(other_preferences) if other_preferences else "No ratings from the other person yet"
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are helping two people decide where to eat. "
+                "Suggest concise food place ideas that feel like real restaurant or takeout options. "
+                "Return exactly one suggestion per line in the format "
+                "'Place idea - short reason'. Do not use markdown bullets or numbering."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Create {payload.count} food place ideas for a shared decision session.\n"
+                f"Current user: {participant_label}\n"
+                f"Current session options: {current_options}\n"
+                f"Known collaborator context: {collaborator_context}\n"
+                f"Requested vibe or constraint: {vibe_note}\n"
+                "Keep each line short, distinct, and easy to add back into the app."
+            ),
+        },
+    ]
+
+
+async def stream_openrouter_suggestions(
+    session: SessionRecord, payload: SuggestionStreamRequest
+) -> AsyncIterator[str]:
+    if not settings.openrouter_configured:
+        yield sse_message("error", {"message": "OpenRouter is not configured on the backend."})
+        return
+
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": settings.app_base_url,
+        "X-Title": "BingeSync",
+    }
+    request_payload = {
+        "model": settings.openrouter_model,
+        "stream": True,
+        "temperature": 0.8,
+        "messages": build_suggestion_messages(session, payload),
+    }
+
+    yield sse_message(
+        "status",
+        {"message": f"Streaming place ideas with {settings.openrouter_model}..."},
+    )
+
+    try:
+        timeout = httpx.Timeout(60.0, connect=10.0, read=60.0, write=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=request_payload,
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        payload_data = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choice = (payload_data.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+
+                    if isinstance(content, str) and content:
+                        yield sse_message("chunk", {"text": content})
+
+    except httpx.HTTPStatusError as error:
+        message = "OpenRouter request failed."
+        if error.response is not None:
+            try:
+                response_payload = error.response.json()
+                message = response_payload.get("error", {}).get("message", message)
+            except ValueError:
+                message = error.response.text or message
+        yield sse_message("error", {"message": message})
+        return
+    except httpx.HTTPError:
+        yield sse_message("error", {"message": "Could not reach OpenRouter."})
+        return
+
+    yield sse_message("done", {"message": "Suggestion stream completed."})
+
+
 app = FastAPI(title="BingeSync API")
 app.add_middleware(
     CORSMiddleware,
@@ -238,17 +382,18 @@ def healthcheck() -> dict[str, bool | str]:
 
 
 @api.post("/sessions", response_model=SessionCreateResponse)
-def create_session(_: CreateSessionRequest | None = None) -> SessionCreateResponse:
+def create_session(payload: CreateSessionRequest | None = None) -> SessionCreateResponse:
     with STORE_LOCK:
         session_id = create_identifier()
         participant_id = create_identifier()
         join_code = create_join_code()
+        participant_label = clean_display_name(payload.name if payload else None, "User 1")
 
         session = SessionRecord(
             session_id=session_id,
             join_code=join_code,
             created_at=now_utc(),
-            participants=[Participant(id=participant_id, label="User 1")],
+            participants=[Participant(id=participant_id, label=participant_label)],
             options=[],
             ratings={participant_id: {}},
         )
@@ -274,7 +419,11 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
             raise HTTPException(status_code=400, detail="Session already has two participants")
 
         participant_id = create_identifier()
-        session.participants.append(Participant(id=participant_id, label=f"User {len(session.participants) + 1}"))
+        participant_label = clean_display_name(
+            payload.name,
+            f"User {len(session.participants) + 1}",
+        )
+        session.participants.append(Participant(id=participant_id, label=participant_label))
         session.ratings.setdefault(participant_id, {})
 
     return SessionCreateResponse(session=serialize_session(session), participantId=participant_id)
@@ -354,6 +503,24 @@ def get_results(session_id: str) -> ResultsResponse:
         )
 
     return ResultsResponse(ready=True, results=compute_results(session))
+
+
+@api.post("/sessions/{session_id}/place-suggestions/stream")
+async def stream_place_suggestions(
+    session_id: str, payload: SuggestionStreamRequest
+) -> StreamingResponse:
+    session = get_session_or_404(session_id)
+    require_participant(session, payload.participantId)
+
+    return StreamingResponse(
+        stream_openrouter_suggestions(session, payload),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 app.include_router(api)
