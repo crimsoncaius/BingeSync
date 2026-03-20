@@ -96,11 +96,9 @@ small {
 .panel-actions,
 .join-row,
 .option-form,
-.stream-controls,
 .rating-row,
 .result-card,
-.participant-grid,
-.suggestion-card {
+.participant-grid {
   display: flex;
   gap: 12px;
 }
@@ -135,8 +133,7 @@ dt {
 }
 
 .join-form,
-.option-form,
-.place-search-form {
+.option-form {
   display: grid;
   gap: 10px;
 }
@@ -228,16 +225,14 @@ input:focus {
 
 .option-list,
 .ratings-list,
-.results-list,
-.suggestion-list {
+.results-list {
   display: grid;
   gap: 12px;
 }
 
 .option-row,
 .rating-row,
-.result-card,
-.suggestion-card {
+.result-card {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
@@ -256,62 +251,6 @@ input:focus {
 
 .result-card {
   align-items: flex-start;
-}
-
-.stream-controls {
-  margin-bottom: 12px;
-  align-items: center;
-}
-
-.stream-controls > input {
-  flex: 1;
-}
-
-.stream-output {
-  margin-top: 12px;
-  padding: 16px;
-  min-height: 140px;
-  white-space: pre-wrap;
-  border-radius: 18px;
-  background: rgba(7, 10, 18, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #dce6ff;
-}
-
-.suggestion-list {
-  margin-top: 16px;
-}
-
-.place-search-form {
-  margin-top: 18px;
-}
-
-.suggestion-card {
-  align-items: flex-start;
-}
-
-.suggestion-card p {
-  flex: 1;
-}
-
-.place-result-copy {
-  display: grid;
-  gap: 6px;
-}
-
-.place-result-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.ghost-link {
-  color: #8db4ff;
-  text-decoration: none;
-}
-
-.ghost-link:hover {
-  text-decoration: underline;
 }
 
 .result-rank {
@@ -356,12 +295,9 @@ dd {
   .panel-header,
   .panel-actions,
   .join-row,
-  .stream-controls,
   .result-card,
   .rating-row,
-  .option-form,
-  .suggestion-card,
-  .place-result-actions {
+  .option-form {
     flex-direction: column;
   }
 

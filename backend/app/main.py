@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import AsyncIterator, Literal
+from typing import Literal
 from uuid import uuid4
 
-import httpx
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from starlette.responses import StreamingResponse
-
-from app.settings import settings
 
 
 SessionStatus = Literal["waiting", "collecting", "rating", "results"]
@@ -63,14 +58,6 @@ class AddOptionRequest(BaseModel):
     name: str = Field(min_length=2, max_length=80)
 
 
-class PlaceSearchResponseItem(BaseModel):
-    id: str
-    name: str
-    formattedAddress: str | None = None
-    rating: float | None = None
-    googleMapsUri: str | None = None
-
-
 class RatingEntry(BaseModel):
     optionId: str
     score: int = Field(ge=1, le=10)
@@ -79,12 +66,6 @@ class RatingEntry(BaseModel):
 class SubmitRatingsRequest(BaseModel):
     participantId: str
     ratings: list[RatingEntry]
-
-
-class SuggestionStreamRequest(BaseModel):
-    participantId: str
-    vibe: str | None = Field(default=None, max_length=140)
-    count: int = Field(default=6, ge=3, le=10)
 
 
 class RankedResult(BaseModel):
@@ -259,202 +240,6 @@ def compute_results(session: SessionRecord) -> list[RankedResult]:
     )
 
 
-def sse_message(event: str, payload: dict[str, object]) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
-
-
-def build_suggestion_messages(session: SessionRecord, payload: SuggestionStreamRequest) -> list[dict[str, str]]:
-    participant = next(
-        (entry for entry in session.participants if entry.id == payload.participantId),
-        None,
-    )
-    participant_label = participant.label if participant else "Current user"
-    current_options = ", ".join(option.name for option in session.options) or "No current options yet"
-    other_preferences = []
-
-    for entry in session.participants:
-        if entry.id == payload.participantId:
-            continue
-
-        ratings = session.ratings.get(entry.id, {})
-        liked_options = [
-            option.name
-            for option in session.options
-            if ratings.get(option.id, 0) >= 7
-        ]
-        if liked_options:
-            other_preferences.append(f"{entry.label} currently likes: {', '.join(liked_options)}")
-
-    vibe_note = payload.vibe.strip() if payload.vibe else "No extra vibe provided"
-    collaborator_context = "\n".join(other_preferences) if other_preferences else "No ratings from the other person yet"
-
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are helping two people decide where to eat. "
-                "Suggest concise food place ideas that feel like real restaurant or takeout options. "
-                "Return exactly one suggestion per line in the format "
-                "'Place idea - short reason'. Do not use markdown bullets or numbering."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Create {payload.count} food place ideas for a shared decision session.\n"
-                f"Current user: {participant_label}\n"
-                f"Current session options: {current_options}\n"
-                f"Known collaborator context: {collaborator_context}\n"
-                f"Requested vibe or constraint: {vibe_note}\n"
-                "Keep each line short, distinct, and easy to add back into the app."
-            ),
-        },
-    ]
-
-
-async def stream_openrouter_suggestions(
-    session: SessionRecord, payload: SuggestionStreamRequest
-) -> AsyncIterator[str]:
-    if not settings.openrouter_configured:
-        yield sse_message("error", {"message": "OpenRouter is not configured on the backend."})
-        return
-
-    headers = {
-        "Authorization": f"Bearer {settings.openrouter_api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": settings.app_base_url,
-        "X-Title": "BingeSync",
-    }
-    request_payload = {
-        "model": settings.openrouter_model,
-        "stream": True,
-        "temperature": 0.8,
-        "messages": build_suggestion_messages(session, payload),
-    }
-
-    yield sse_message(
-        "status",
-        {"message": f"Streaming place ideas with {settings.openrouter_model}..."},
-    )
-
-    try:
-        timeout = httpx.Timeout(60.0, connect=10.0, read=60.0, write=30.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST",
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=request_payload,
-            ) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-
-                    try:
-                        payload_data = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-
-                    choice = (payload_data.get("choices") or [{}])[0]
-                    delta = choice.get("delta") or {}
-                    content = delta.get("content")
-
-                    if isinstance(content, str) and content:
-                        yield sse_message("chunk", {"text": content})
-
-    except httpx.HTTPStatusError as error:
-        message = "OpenRouter request failed."
-        if error.response is not None:
-            try:
-                response_payload = error.response.json()
-                message = response_payload.get("error", {}).get("message", message)
-            except ValueError:
-                message = error.response.text or message
-        yield sse_message("error", {"message": message})
-        return
-    except httpx.HTTPError:
-        yield sse_message("error", {"message": "Could not reach OpenRouter."})
-        return
-
-    yield sse_message("done", {"message": "Suggestion stream completed."})
-
-
-async def search_google_places(query: str) -> list[PlaceSearchResponseItem]:
-    if not settings.google_places_configured:
-        raise HTTPException(
-            status_code=503,
-            detail="Google Places is not configured on the backend.",
-        )
-
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key or "",
-        "X-Goog-FieldMask": ",".join(
-            [
-                "places.id",
-                "places.displayName",
-                "places.formattedAddress",
-                "places.rating",
-                "places.googleMapsUri",
-            ]
-        ),
-    }
-    request_payload = {
-        "textQuery": query,
-        "maxResultCount": 6,
-        "includedType": "restaurant",
-    }
-
-    try:
-        timeout = httpx.Timeout(20.0, connect=10.0, read=20.0, write=20.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                "https://places.googleapis.com/v1/places:searchText",
-                headers=headers,
-                json=request_payload,
-            )
-            response.raise_for_status()
-    except httpx.HTTPStatusError as error:
-        message = "Google Places request failed."
-        if error.response is not None:
-            try:
-                payload = error.response.json()
-                message = payload.get("error", {}).get("message", message)
-            except ValueError:
-                message = error.response.text or message
-        raise HTTPException(status_code=502, detail=message) from error
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail="Could not reach Google Places.") from error
-
-    payload = response.json()
-    results: list[PlaceSearchResponseItem] = []
-
-    for place in payload.get("places", []):
-        display_name = place.get("displayName", {}).get("text")
-        place_id = place.get("id")
-
-        if not display_name or not place_id:
-            continue
-
-        results.append(
-            PlaceSearchResponseItem(
-                id=place_id,
-                name=display_name,
-                formattedAddress=place.get("formattedAddress"),
-                rating=place.get("rating"),
-                googleMapsUri=place.get("googleMapsUri"),
-            )
-        )
-
-    return results
-
-
 app = FastAPI(title="BingeSync API")
 app.add_middleware(
     CORSMiddleware,
@@ -470,8 +255,6 @@ api = APIRouter(prefix="/api")
 def healthcheck() -> dict[str, bool | str]:
     return {
         "status": "ok",
-        "openrouterConfigured": settings.openrouter_configured,
-        "googlePlacesConfigured": settings.google_places_configured,
     }
 
 
@@ -526,18 +309,6 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
 @api.get("/sessions/{session_ref}", response_model=SessionResponse)
 def get_session(session_ref: str) -> SessionResponse:
     return serialize_session(resolve_session_or_404(session_ref))
-
-
-@api.get("/places/search", response_model=list[PlaceSearchResponseItem])
-async def place_search(
-    query: str = Query(min_length=2, max_length=120)
-) -> list[PlaceSearchResponseItem]:
-    cleaned_query = " ".join(query.split())
-
-    if len(cleaned_query) < 2:
-        raise HTTPException(status_code=400, detail="Search query is too short.")
-
-    return await search_google_places(cleaned_query)
 
 
 @api.post("/sessions/{session_id}/options", response_model=SessionResponse)
@@ -609,24 +380,6 @@ def get_results(session_id: str) -> ResultsResponse:
         )
 
     return ResultsResponse(ready=True, results=compute_results(session))
-
-
-@api.post("/sessions/{session_id}/place-suggestions/stream")
-async def stream_place_suggestions(
-    session_id: str, payload: SuggestionStreamRequest
-) -> StreamingResponse:
-    session = get_session_or_404(session_id)
-    require_participant(session, payload.participantId)
-
-    return StreamingResponse(
-        stream_openrouter_suggestions(session, payload),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 app.include_router(api)

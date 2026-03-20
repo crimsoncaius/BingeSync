@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   addOption,
@@ -6,10 +6,7 @@ import {
   fetchResults,
   fetchSession,
   joinSession,
-  searchPlaces,
-  streamPlaceSuggestions,
   submitRatings,
-  type PlaceSearchResult,
   type RankedResult,
   type SessionResponse,
 } from './api'
@@ -45,47 +42,17 @@ function persistSession(value: StoredSession | null) {
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value))
 }
 
-function extractSuggestions(rawText: string) {
-  const seen = new Set<string>()
-
-  return rawText
-    .split('\n')
-    .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
-    .filter(Boolean)
-    .filter((line) => {
-      const normalized = line.toLowerCase()
-      if (seen.has(normalized)) {
-        return false
-      }
-      seen.add(normalized)
-      return true
-    })
-}
-
-function extractOptionName(suggestion: string) {
-  return suggestion.split(/\s[-:]\s/, 1)[0]?.trim() || suggestion
-}
-
 export default function App() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [participantId, setParticipantId] = useState('')
   const [userNameInput, setUserNameInput] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [optionInput, setOptionInput] = useState('')
-  const [placeSearchInput, setPlaceSearchInput] = useState('')
-  const [placeResults, setPlaceResults] = useState<PlaceSearchResult[]>([])
-  const [searchingPlaces, setSearchingPlaces] = useState(false)
-  const [suggestionPrompt, setSuggestionPrompt] = useState('')
   const [ratings, setRatings] = useState<Record<string, number>>({})
   const [results, setResults] = useState<RankedResult[]>([])
-  const [streamedText, setStreamedText] = useState('')
-  const [suggestionStatus, setSuggestionStatus] = useState('')
-  const [streamingSuggestions, setStreamingSuggestions] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [bootstrapping, setBootstrapping] = useState(true)
-  const suggestionAbortRef = useRef<AbortController | null>(null)
-  const autoStreamKeyRef = useRef('')
 
   useEffect(() => {
     const stored = readStoredSession()
@@ -120,20 +87,6 @@ export default function App() {
     void loadResults(session.sessionId)
   }, [session?.isReadyForResults, session?.sessionId])
 
-  useEffect(() => {
-    if (!session || !participantId || streamingSuggestions) {
-      return
-    }
-
-    const autoStreamKey = `${session.sessionId}:${participantId}`
-    if (autoStreamKeyRef.current === autoStreamKey) {
-      return
-    }
-
-    autoStreamKeyRef.current = autoStreamKey
-    void handleStreamSuggestions(true)
-  }, [participantId, session, streamingSuggestions])
-
   const participant = useMemo(
     () => session?.participants.find((entry) => entry.id === participantId) ?? null,
     [participantId, session?.participants],
@@ -146,8 +99,6 @@ export default function App() {
       const score = ratings[option.id]
       return Number.isInteger(score) && score >= 1 && score <= 10
     })
-
-  const parsedSuggestions = useMemo(() => extractSuggestions(streamedText), [streamedText])
 
   async function refreshSession(
     sessionId: string,
@@ -254,24 +205,14 @@ export default function App() {
   }
 
   function handleLeaveSession() {
-    suggestionAbortRef.current?.abort()
-    suggestionAbortRef.current = null
-    autoStreamKeyRef.current = ''
     persistSession(null)
     setSession(null)
     setParticipantId('')
     setUserNameInput('')
     setJoinCodeInput('')
     setOptionInput('')
-    setPlaceSearchInput('')
-    setPlaceResults([])
-    setSearchingPlaces(false)
-    setSuggestionPrompt('')
     setRatings({})
     setResults([])
-    setStreamedText('')
-    setSuggestionStatus('')
-    setStreamingSuggestions(false)
     setError('')
   }
 
@@ -282,114 +223,6 @@ export default function App() {
       ...currentRatings,
       [optionId]: Number.isFinite(parsed) ? Math.max(1, Math.min(10, parsed)) : 1,
     }))
-  }
-
-  async function handleStreamSuggestions(isAutomatic = false) {
-    if (!session || !participantId) {
-      return
-    }
-
-    suggestionAbortRef.current?.abort()
-    const controller = new AbortController()
-    suggestionAbortRef.current = controller
-
-    try {
-      setError('')
-      setSuggestionStatus(
-        isAutomatic ? 'Auto-streaming food place ideas...' : 'Streaming food place ideas...',
-      )
-      setStreamedText('')
-      setStreamingSuggestions(true)
-
-      await streamPlaceSuggestions(session.sessionId, participantId, suggestionPrompt, {
-        signal: controller.signal,
-        onChunk: (text) => {
-          setStreamedText((currentText) => `${currentText}${text}`)
-        },
-        onError: (message) => {
-          setError(message)
-          setSuggestionStatus('Suggestion stream stopped with an error.')
-        },
-        onDone: () => {
-          setSuggestionStatus(
-            isAutomatic ? 'Live suggestions loaded automatically.' : 'Suggestion stream complete.',
-          )
-        },
-      })
-    } catch (streamError) {
-      if (streamError instanceof Error && streamError.name === 'AbortError') {
-        setSuggestionStatus('Suggestion stream cancelled.')
-      } else {
-        setError(streamError instanceof Error ? streamError.message : 'Could not stream suggestions')
-        setSuggestionStatus('Suggestion stream failed.')
-      }
-    } finally {
-      if (suggestionAbortRef.current === controller) {
-        suggestionAbortRef.current = null
-      }
-      setStreamingSuggestions(false)
-    }
-  }
-
-  function handleStopSuggestions() {
-    suggestionAbortRef.current?.abort()
-    suggestionAbortRef.current = null
-    setStreamingSuggestions(false)
-  }
-
-  async function handleAddSuggestedPlace(suggestion: string) {
-    if (!session || !participantId) {
-      return
-    }
-
-    try {
-      setBusy(true)
-      setError('')
-      const nextSession = await addOption(
-        session.sessionId,
-        participantId,
-        extractOptionName(suggestion),
-      )
-      setSession(nextSession)
-    } catch (suggestionError) {
-      setError(
-        suggestionError instanceof Error ? suggestionError.message : 'Could not add suggested place',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handlePlaceSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
-    try {
-      setSearchingPlaces(true)
-      setError('')
-      const nextResults = await searchPlaces(placeSearchInput)
-      setPlaceResults(nextResults)
-    } catch (placeError) {
-      setError(placeError instanceof Error ? placeError.message : 'Could not search Google Places')
-    } finally {
-      setSearchingPlaces(false)
-    }
-  }
-
-  async function handleAddPlaceResult(place: PlaceSearchResult) {
-    if (!session || !participantId) {
-      return
-    }
-
-    try {
-      setBusy(true)
-      setError('')
-      const nextSession = await addOption(session.sessionId, participantId, place.name)
-      setSession(nextSession)
-    } catch (addPlaceError) {
-      setError(addPlaceError instanceof Error ? addPlaceError.message : 'Could not add place result')
-    } finally {
-      setBusy(false)
-    }
   }
 
   if (bootstrapping) {
@@ -504,7 +337,7 @@ export default function App() {
             <div className="panel-header">
               <div>
                 <h2>Add food options</h2>
-                <p>Add your own idea or search Google Places for real restaurants nearby.</p>
+                <p>Add your own food places to build the shared list for rating.</p>
               </div>
               <span className="pill">{session.options.length} options</span>
             </div>
@@ -532,122 +365,6 @@ export default function App() {
                 ))
               )}
             </div>
-
-            <form className="place-search-form" onSubmit={handlePlaceSearch}>
-              <div>
-                <h3>Search real places</h3>
-                <p className="muted">
-                  Pull in real restaurant options from Google Places, then add the best match.
-                </p>
-              </div>
-              <div className="stream-controls">
-                <input
-                  onChange={(event) => setPlaceSearchInput(event.target.value)}
-                  placeholder="Search restaurants, sushi near me, taco places..."
-                  value={placeSearchInput}
-                />
-                <button
-                  className="secondary-button"
-                  disabled={searchingPlaces || placeSearchInput.trim().length < 2}
-                >
-                  {searchingPlaces ? 'Searching...' : 'Search Places'}
-                </button>
-              </div>
-            </form>
-
-            {placeResults.length > 0 ? (
-              <div className="suggestion-list">
-                {placeResults.map((place) => (
-                  <article className="suggestion-card" key={place.id}>
-                    <div className="place-result-copy">
-                      <p>{place.name}</p>
-                      {place.formattedAddress ? <small>{place.formattedAddress}</small> : null}
-                      {place.rating ? <small>Google rating: {place.rating.toFixed(1)}</small> : null}
-                    </div>
-                    <div className="place-result-actions">
-                      {place.googleMapsUri ? (
-                        <a
-                          className="ghost-link"
-                          href={place.googleMapsUri}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          View map
-                        </a>
-                      ) : null}
-                      <button
-                        className="secondary-button"
-                        disabled={busy}
-                        onClick={() => handleAddPlaceResult(place)}
-                        type="button"
-                      >
-                        Add to options
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>Stream food place ideas</h2>
-                <p>
-                  Use the AI stream to surface restaurant-style ideas live, then add the best ones
-                  into the shared pool.
-                </p>
-              </div>
-              <span className="pill">{streamingSuggestions ? 'Streaming live' : 'AI suggestions'}</span>
-            </div>
-
-            <div className="stream-controls">
-              <input
-                onChange={(event) => setSuggestionPrompt(event.target.value)}
-                placeholder="Optional vibe: cheap, spicy, date night, near the city..."
-                value={suggestionPrompt}
-              />
-              <div className="panel-actions">
-                <button
-                  className="primary-button"
-                  disabled={streamingSuggestions}
-                  onClick={() => handleStreamSuggestions(false)}
-                >
-                  Refresh suggestions
-                </button>
-                <button
-                  className="secondary-button"
-                  disabled={!streamingSuggestions}
-                  onClick={handleStopSuggestions}
-                >
-                  Stop stream
-                </button>
-              </div>
-            </div>
-
-            {suggestionStatus ? <p className="muted">{suggestionStatus}</p> : null}
-
-            <div className="stream-output" aria-live="polite">
-              {streamedText || 'No live suggestions yet.'}
-            </div>
-
-            {parsedSuggestions.length > 0 ? (
-              <div className="suggestion-list">
-                {parsedSuggestions.map((suggestion) => (
-                  <article className="suggestion-card" key={suggestion}>
-                    <p>{suggestion}</p>
-                    <button
-                      className="secondary-button"
-                      disabled={busy}
-                      onClick={() => handleAddSuggestedPlace(suggestion)}
-                    >
-                      Add to options
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : null}
           </section>
 
           <section className="panel">
