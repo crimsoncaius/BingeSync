@@ -167,6 +167,21 @@ def get_session_or_404(session_id: str) -> SessionRecord:
     return session
 
 
+def resolve_session_or_404(session_ref: str) -> SessionRecord:
+    normalized_ref = session_ref.strip()
+
+    session = SESSIONS.get(normalized_ref)
+    if session is not None:
+        return session
+
+    join_code = normalized_ref.upper()
+    session_id = JOIN_CODES.get(join_code)
+    if session_id is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return get_session_or_404(session_id)
+
+
 def require_participant(session: SessionRecord, participant_id: str) -> None:
     if not any(participant.id == participant_id for participant in session.participants):
         raise HTTPException(status_code=403, detail="Participant is not part of this session")
@@ -508,9 +523,9 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
     return SessionCreateResponse(session=serialize_session(session), participantId=participant_id)
 
 
-@api.get("/sessions/{session_id}", response_model=SessionResponse)
-def get_session(session_id: str) -> SessionResponse:
-    return serialize_session(get_session_or_404(session_id))
+@api.get("/sessions/{session_ref}", response_model=SessionResponse)
+def get_session(session_ref: str) -> SessionResponse:
+    return serialize_session(resolve_session_or_404(session_ref))
 
 
 @api.get("/places/search", response_model=list[PlaceSearchResponseItem])

@@ -98,8 +98,8 @@ export function joinSession(joinCode: string, name: string) {
   })
 }
 
-export function fetchSession(sessionId: string) {
-  return request<SessionResponse>(`/sessions/${sessionId}`)
+export function fetchSession(sessionRef: string) {
+  return request<SessionResponse>(`/sessions/${sessionRef}`)
 }
 
 export function addOption(sessionId: string, participantId: string, name: string) {
