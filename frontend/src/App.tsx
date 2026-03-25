@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  API_BASE,
   addOption,
   createSession,
   fetchResults,
@@ -110,6 +111,18 @@ export default function App() {
     const existingRatings = session.ratings[participantId] ?? {}
     setRatings(existingRatings)
   }, [participantId, session])
+
+  useEffect(() => {
+    if (!session?.sessionId || !participantId) return
+
+    const source = new EventSource(`${API_BASE}/sessions/${session.sessionId}/events`)
+    source.onmessage = (event) => {
+      try {
+        setSession(JSON.parse(event.data) as SessionResponse)
+      } catch { /* ignore malformed events */ }
+    }
+    return () => source.close()
+  }, [session?.sessionId, participantId])
 
   useEffect(() => {
     if (!session?.isReadyForResults) {

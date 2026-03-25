@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -111,6 +113,9 @@ SESSIONS: dict[str, SessionRecord] = {}
 JOIN_CODES: dict[str, str] = {}
 STORE_LOCK = Lock()
 
+_sse_consumers: dict[str, set[asyncio.Queue[str]]] = {}
+_event_loop: asyncio.AbstractEventLoop | None = None
+
 
 def normalize_name(value: str) -> str:
     return " ".join(value.lower().split())
@@ -211,6 +216,15 @@ def serialize_session(session: SessionRecord) -> SessionResponse:
     )
 
 
+def _broadcast(session: SessionRecord) -> None:
+    consumers = _sse_consumers.get(session.session_id)
+    if not consumers or _event_loop is None:
+        return
+    data = serialize_session(session).model_dump_json()
+    for q in list(consumers):
+        _event_loop.call_soon_threadsafe(q.put_nowait, data)
+
+
 def compute_results(session: SessionRecord) -> list[RankedResult]:
     if not has_full_ratings(session):
         return []
@@ -249,6 +263,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 api = APIRouter(prefix="/api")
+
+
+@app.on_event("startup")
+async def _capture_event_loop() -> None:
+    global _event_loop
+    _event_loop = asyncio.get_running_loop()
 
 
 @api.get("/health")
@@ -303,6 +323,7 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
         session.participants.append(Participant(id=participant_id, label=participant_label))
         session.ratings.setdefault(participant_id, {})
 
+    _broadcast(session)
     return SessionCreateResponse(session=serialize_session(session), participantId=participant_id)
 
 
@@ -338,6 +359,7 @@ def create_option(session_id: str, payload: AddOptionRequest) -> SessionResponse
                 )
             )
 
+    _broadcast(session)
     return serialize_session(session)
 
 
@@ -365,6 +387,7 @@ def save_ratings(session_id: str, payload: SubmitRatingsRequest) -> SessionRespo
             entry.optionId: entry.score for entry in payload.ratings
         }
 
+    _broadcast(session)
     return serialize_session(session)
 
 
@@ -380,6 +403,36 @@ def get_results(session_id: str) -> ResultsResponse:
         )
 
     return ResultsResponse(ready=True, results=compute_results(session))
+
+
+@api.get("/sessions/{session_id}/events")
+async def session_events(session_id: str) -> StreamingResponse:
+    session = get_session_or_404(session_id)
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    _sse_consumers.setdefault(session_id, set()).add(queue)
+    initial = serialize_session(session).model_dump_json()
+
+    async def _generate():
+        try:
+            yield f"data: {initial}\n\n"
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            consumers = _sse_consumers.get(session_id)
+            if consumers:
+                consumers.discard(queue)
+                if not consumers:
+                    del _sse_consumers[session_id]
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 app.include_router(api)
