@@ -286,9 +286,15 @@ small {
 }
 
 .join-code-block strong {
+  font-family: 'Courier New', ui-monospace, monospace;
   font-size: clamp(2rem, 6vw, 2.9rem);
-  letter-spacing: 0.16em;
+  letter-spacing: 0.18em;
   color: var(--text);
+  background: color-mix(in oklab, var(--accent-soft) 40%, white 60%);
+  border: 1px solid color-mix(in oklab, var(--line) 70%, var(--accent) 30%);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  width: fit-content;
 }
 
 .session-meta,
@@ -486,6 +492,20 @@ input:focus {
 .participant-card--empty {
   border-style: dashed;
   background: color-mix(in oklab, white 74%, var(--bg-soft) 26%);
+  gap: 8px;
+}
+
+.waiting-code {
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-size: clamp(1.4rem, 4vw, 1.8rem);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--accent-strong);
+  background: color-mix(in oklab, var(--accent-soft) 48%, white 52%);
+  border: 1px solid color-mix(in oklab, var(--line) 60%, var(--accent) 40%);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  width: fit-content;
 }
 
 .option-form {
@@ -774,6 +794,7 @@ dd {
 
   .join-code-block strong {
     font-size: 1.8rem;
+    padding: 4px 10px;
   }
 }
 

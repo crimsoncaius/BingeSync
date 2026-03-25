@@ -489,7 +489,15 @@ export default function App() {
               {session.participants.length < session.maxParticipants ? (
                 <article className="participant-card participant-card--empty">
                   <span className="participant-label">Waiting slot</span>
-                  <strong>1 more person can join</strong>
+                  <strong>Share this code to invite your duo</strong>
+                  <span className="waiting-code">{session.joinCode}</span>
+                  <button
+                    className="secondary-button secondary-button--compact"
+                    onClick={handleCopyJoinCode}
+                    type="button"
+                  >
+                    {copiedJoinCode ? 'Copied' : 'Copy code'}
+                  </button>
                 </article>
               ) : null}
             </div>
