@@ -488,36 +488,35 @@ async def get_suggestions(q: str = ""):
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://maps.googleapis.com/maps/api/place/autocomplete/json",
-                params={
-                    "input": query,
-                    "types": "establishment",
-                    "key": GOOGLE_PLACES_API_KEY,
+            resp = await client.post(
+                "https://places.googleapis.com/v1/places:searchText",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+                    "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types",
+                },
+                json={
+                    "textQuery": query,
+                    "includedType": "restaurant",
+                    "maxResultCount": 5,
+                    "locationBias": {
+                        "circle": {
+                            "center": {"latitude": 1.3521, "longitude": 103.8198},
+                            "radius": 20000.0,
+                        }
+                    },
                 },
                 timeout=5.0,
             )
             data = resp.json()
 
-        if data.get("status") != "OK":
-            return []
-
         results = []
-        for p in data.get("predictions", []):
-            types = p.get("types", [])
-            food_type = _best_food_type(types)
-            if food_type is None:
-                continue
+        for place in data.get("places", []):
             results.append({
-                "placeId": p["place_id"],
-                "name": p.get("structured_formatting", {}).get(
-                    "main_text", p["description"]
-                ),
-                "address": p.get("structured_formatting", {}).get(
-                    "secondary_text", ""
-                ),
-                "types": types,
-                "foodType": food_type,
+                "placeId": place.get("id", ""),
+                "name": place.get("displayName", {}).get("text", ""),
+                "address": place.get("formattedAddress", ""),
+                "types": place.get("types", []),
             })
         return results
     except Exception:
