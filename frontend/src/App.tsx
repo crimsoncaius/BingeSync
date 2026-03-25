@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   API_BASE,
@@ -6,8 +6,10 @@ import {
   createSession,
   fetchResults,
   fetchSession,
+  fetchSuggestions,
   joinSession,
   submitRatings,
+  type PlaceSuggestion,
   type RankedResult,
   type SessionResponse,
 } from './api'
@@ -83,6 +85,9 @@ export default function App() {
   const [bootstrapping, setBootstrapping] = useState(true)
   const [resultsLoading, setResultsLoading] = useState(false)
   const [copiedJoinCode, setCopiedJoinCode] = useState(false)
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const autocompleteRef = useRef<HTMLDivElement>(null)
 
   const busy = pendingAction !== null
 
@@ -145,6 +150,32 @@ export default function App() {
 
     return () => window.clearTimeout(timeoutId)
   }, [copiedJoinCode])
+
+  useEffect(() => {
+    const query = optionInput.trim()
+    if (query.length < 2) {
+      setSuggestions([])
+      return
+    }
+
+    const timer = window.setTimeout(async () => {
+      const results = await fetchSuggestions(query)
+      setSuggestions(results.slice(0, 5))
+      setShowSuggestions(true)
+    }, 300)
+
+    return () => window.clearTimeout(timer)
+  }, [optionInput])
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const participant = useMemo(
     () => session?.participants.find((entry) => entry.id === participantId) ?? null,
@@ -247,6 +278,8 @@ export default function App() {
       const nextSession = await addOption(session.sessionId, participantId, optionInput.trim())
       setSession(nextSession)
       setOptionInput('')
+      setSuggestions([])
+      setShowSuggestions(false)
     } catch (optionError) {
       setError(optionError instanceof Error ? optionError.message : 'Could not add option')
     } finally {
@@ -312,6 +345,8 @@ export default function App() {
     setUserNameInput('')
     setJoinCodeInput('')
     setOptionInput('')
+    setSuggestions([])
+    setShowSuggestions(false)
     setRatings({})
     setResults([])
     setError('')
@@ -514,11 +549,42 @@ export default function App() {
             </div>
 
             <form className="option-form" onSubmit={handleAddOption}>
-              <input
-                onChange={(event) => setOptionInput(event.target.value)}
-                placeholder="Ramen, tacos, Korean fried chicken..."
-                value={optionInput}
-              />
+              <div className="autocomplete-wrapper" ref={autocompleteRef}>
+                <input
+                  onChange={(event) => setOptionInput(event.target.value)}
+                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setShowSuggestions(false)
+                  }}
+                  placeholder="Ramen, tacos, Korean fried chicken..."
+                  value={optionInput}
+                />
+                {showSuggestions && suggestions.length > 0 && (
+                  <ul className="autocomplete-dropdown" role="listbox">
+                    {suggestions.map((s) => (
+                      <li
+                        key={s.placeId}
+                        role="option"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setOptionInput(s.name)
+                          setSuggestions([])
+                          setShowSuggestions(false)
+                        }}
+                      >
+                        <div className="suggestion-row">
+                          <span className="suggestion-icon" aria-hidden="true">🍴</span>
+                          <div className="suggestion-text">
+                            <strong>{s.name}</strong>
+                            {s.address && <small>{s.address}</small>}
+                          </div>
+                          <span className="suggestion-badge">{s.foodType.replace(/_/g, ' ')}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <button className="primary-button" disabled={busy || optionInput.trim().length < 2}>
                 {renderActionLabel(pendingAction, 'add-option', 'Add food option', 'Adding option...')}
               </button>

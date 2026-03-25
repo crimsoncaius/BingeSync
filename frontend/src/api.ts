@@ -114,3 +114,21 @@ export function submitRatings(
 export function fetchResults(sessionId: string) {
   return request<ResultsResponse>(`/sessions/${sessionId}/results`)
 }
+
+export interface PlaceSuggestion {
+  placeId: string
+  name: string
+  address: string
+  types: string[]
+  foodType: string
+}
+
+export async function fetchSuggestions(query: string): Promise<PlaceSuggestion[]> {
+  try {
+    const res = await fetch(`${API_BASE}/suggestions?q=${encodeURIComponent(query)}`)
+    if (!res.ok) return []
+    return (await res.json()) as PlaceSuggestion[]
+  } catch {
+    return []
+  }
+}

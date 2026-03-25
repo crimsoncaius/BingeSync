@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
 
 SessionStatus = Literal["waiting", "collecting", "rating", "results"]
@@ -433,6 +437,91 @@ async def session_events(session_id: str) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+FOOD_PLACE_TYPES = frozenset({
+    "food",
+    "restaurant",
+    "cafe",
+    "bakery",
+    "bar",
+    "meal_delivery",
+    "meal_takeaway",
+    "fast_food",
+    "ice_cream_shop",
+    "sandwich_shop",
+    "pizza_restaurant",
+    "coffee_shop",
+    "breakfast_restaurant",
+    "brunch_restaurant",
+    "chinese_restaurant",
+    "indian_restaurant",
+    "italian_restaurant",
+    "japanese_restaurant",
+    "korean_restaurant",
+    "mexican_restaurant",
+    "seafood_restaurant",
+    "thai_restaurant",
+    "vietnamese_restaurant",
+    "steak_house",
+    "sushi_restaurant",
+    "vegan_restaurant",
+    "vegetarian_restaurant",
+})
+
+
+def _best_food_type(types: list[str]) -> str | None:
+    """Return the most descriptive food-related type from a prediction's types list."""
+    for t in types:
+        if t in FOOD_PLACE_TYPES and t not in ("food", "establishment"):
+            return t
+    if "food" in types:
+        return "food"
+    return None
+
+
+@api.get("/suggestions")
+async def get_suggestions(q: str = ""):
+    query = q.strip()
+    if not query or not GOOGLE_PLACES_API_KEY:
+        return []
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://maps.googleapis.com/maps/api/place/autocomplete/json",
+                params={
+                    "input": query,
+                    "types": "establishment",
+                    "key": GOOGLE_PLACES_API_KEY,
+                },
+                timeout=5.0,
+            )
+            data = resp.json()
+
+        if data.get("status") != "OK":
+            return []
+
+        results = []
+        for p in data.get("predictions", []):
+            types = p.get("types", [])
+            food_type = _best_food_type(types)
+            if food_type is None:
+                continue
+            results.append({
+                "placeId": p["place_id"],
+                "name": p.get("structured_formatting", {}).get(
+                    "main_text", p["description"]
+                ),
+                "address": p.get("structured_formatting", {}).get(
+                    "secondary_text", ""
+                ),
+                "types": types,
+                "foodType": food_type,
+            })
+        return results
+    except Exception:
+        return []
 
 
 app.include_router(api)
