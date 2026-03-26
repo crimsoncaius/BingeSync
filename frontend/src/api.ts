@@ -9,6 +9,15 @@ export interface FoodOption {
   id: string
   name: string
   addedBy: string
+  address?: string | null
+  googlePlaceId?: string | null
+  rating?: number | null
+  userRatingCount?: number | null
+  priceLevel?: string | null
+  phone?: string | null
+  websiteUri?: string | null
+  googleMapsUri?: string | null
+  openNow?: boolean | null
 }
 
 export interface RankedResult {
@@ -26,6 +35,7 @@ export interface SessionResponse {
   participants: Participant[]
   options: FoodOption[]
   ratings: Record<string, Record<string, number>>
+  selectionDone: Record<string, boolean>
   maxParticipants: number
   isReadyForResults: boolean
 }
@@ -69,10 +79,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export function createSession(name: string) {
+export function createSession(name: string, maxParticipants: number = 2) {
   return request<SessionCreateResponse>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name: name.trim() || null }),
+    body: JSON.stringify({
+      name: name.trim() || null,
+      maxParticipants,
+    }),
   })
 }
 
@@ -83,14 +96,44 @@ export function joinSession(joinCode: string, name: string) {
   })
 }
 
-export function fetchSession(sessionRef: string) {
-  return request<SessionResponse>(`/sessions/${sessionRef}`)
+export function fetchSession(sessionRef: string, participantId?: string) {
+  const query =
+    participantId !== undefined && participantId !== ''
+      ? `?participantId=${encodeURIComponent(participantId)}`
+      : ''
+  return request<SessionResponse>(`/sessions/${sessionRef}${query}`)
 }
 
-export function addOption(sessionId: string, participantId: string, name: string) {
+export function addOption(
+  sessionId: string,
+  participantId: string,
+  name: string,
+  placeId?: string | null,
+) {
+  const body: { participantId: string; name: string; placeId?: string } = {
+    participantId,
+    name,
+  }
+  if (placeId) {
+    body.placeId = placeId
+  }
   return request<SessionResponse>(`/sessions/${sessionId}/options`, {
     method: 'POST',
-    body: JSON.stringify({ participantId, name }),
+    body: JSON.stringify(body),
+  })
+}
+
+export function removeOption(sessionId: string, participantId: string, optionId: string) {
+  const q = `?participantId=${encodeURIComponent(participantId)}`
+  return request<SessionResponse>(`/sessions/${sessionId}/options/${encodeURIComponent(optionId)}${q}`, {
+    method: 'DELETE',
+  })
+}
+
+export function markSelectionDone(sessionId: string, participantId: string, done: boolean) {
+  return request<SessionResponse>(`/sessions/${sessionId}/selection/done`, {
+    method: 'POST',
+    body: JSON.stringify({ participantId, done }),
   })
 }
 

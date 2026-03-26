@@ -4,21 +4,46 @@ import asyncio
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Lock
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+
+def _load_env_files() -> None:
+    """Load `.env` from repo root or backend (do not override existing OS env)."""
+    for base in (
+        Path(__file__).resolve().parent.parent.parent,
+        Path(__file__).resolve().parent.parent,
+    ):
+        path = base / ".env"
+        if not path.is_file():
+            continue
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_env_files()
 GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
 
 SessionStatus = Literal["waiting", "collecting", "rating", "results"]
-MAX_PARTICIPANTS = 2
+MIN_PARTICIPANTS = 2
+MAX_PARTICIPANTS_CAP = 10
+DEFAULT_MAX_PARTICIPANTS = MIN_PARTICIPANTS
 JOIN_CODE_LENGTH = 6
 SCORE_PENALTY_MULTIPLIER = 0.4
 
@@ -32,6 +57,15 @@ class FoodOptionResponse(BaseModel):
     id: str
     name: str
     addedBy: str
+    address: str | None = None
+    googlePlaceId: str | None = None
+    rating: float | None = None
+    userRatingCount: int | None = None
+    priceLevel: str | None = None
+    phone: str | None = None
+    websiteUri: str | None = None
+    googleMapsUri: str | None = None
+    openNow: bool | None = None
 
 
 class SessionResponse(BaseModel):
@@ -41,6 +75,7 @@ class SessionResponse(BaseModel):
     participants: list[ParticipantResponse]
     options: list[FoodOptionResponse]
     ratings: dict[str, dict[str, int]]
+    selectionDone: dict[str, bool]
     maxParticipants: int
     isReadyForResults: bool
 
@@ -52,6 +87,11 @@ class SessionCreateResponse(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     name: str | None = Field(default=None, max_length=40)
+    maxParticipants: int = Field(
+        default=DEFAULT_MAX_PARTICIPANTS,
+        ge=MIN_PARTICIPANTS,
+        le=MAX_PARTICIPANTS_CAP,
+    )
 
 
 class JoinSessionRequest(BaseModel):
@@ -62,6 +102,7 @@ class JoinSessionRequest(BaseModel):
 class AddOptionRequest(BaseModel):
     participantId: str
     name: str = Field(min_length=2, max_length=80)
+    placeId: str | None = Field(default=None, max_length=256)
 
 
 class RatingEntry(BaseModel):
@@ -72,6 +113,11 @@ class RatingEntry(BaseModel):
 class SubmitRatingsRequest(BaseModel):
     participantId: str
     ratings: list[RatingEntry]
+
+
+class SelectionDoneRequest(BaseModel):
+    participantId: str
+    done: bool = True
 
 
 class RankedResult(BaseModel):
@@ -100,6 +146,15 @@ class FoodOption:
     name: str
     normalized_name: str
     added_by: str
+    address: str | None = None
+    google_place_id: str | None = None
+    rating: float | None = None
+    user_rating_count: int | None = None
+    price_level_label: str | None = None
+    phone: str | None = None
+    website_uri: str | None = None
+    google_maps_uri: str | None = None
+    open_now: bool | None = None
 
 
 @dataclass
@@ -110,19 +165,40 @@ class SessionRecord:
     participants: list[Participant]
     options: list[FoodOption]
     ratings: dict[str, dict[str, int]]
-    max_participants: int = MAX_PARTICIPANTS
+    selection_done: dict[str, bool]
+    max_participants: int = DEFAULT_MAX_PARTICIPANTS
 
 
 SESSIONS: dict[str, SessionRecord] = {}
 JOIN_CODES: dict[str, str] = {}
 STORE_LOCK = Lock()
 
-_sse_consumers: dict[str, set[asyncio.Queue[str]]] = {}
+_sse_consumers: dict[str, set[tuple[asyncio.Queue[str], str | None]]] = {}
 _event_loop: asyncio.AbstractEventLoop | None = None
 
 
 def normalize_name(value: str) -> str:
     return " ".join(value.lower().split())
+
+
+def unique_normalized_for_participant(
+    session: SessionRecord,
+    participant_id: str,
+    base_normalized: str,
+) -> str:
+    """Ensure each participant can add multiple picks even when names normalize the same.
+
+    Previously we deduped globally on normalized name, so a second 'Starbucks' (or the same
+    dish as your partner) silently did not add a row — it looked like only one pick worked.
+    """
+    normalized_name = base_normalized
+    while any(
+        option.normalized_name == normalized_name and option.added_by == participant_id
+        for option in session.options
+    ):
+        normalized_name = f"{base_normalized}::{create_identifier()}"
+
+    return normalized_name
 
 
 def clean_display_name(value: str | None, fallback: str) -> str:
@@ -178,7 +254,8 @@ def require_participant(session: SessionRecord, participant_id: str) -> None:
 
 
 def has_full_ratings(session: SessionRecord) -> bool:
-    if len(session.participants) != session.max_participants or not session.options:
+    """True when every current participant has rated every option (results step)."""
+    if len(session.participants) < MIN_PARTICIPANTS or not session.options:
         return False
 
     option_ids = {option.id for option in session.options}
@@ -191,30 +268,83 @@ def has_full_ratings(session: SessionRecord) -> bool:
     return True
 
 
+def all_participants_finished_selection(session: SessionRecord) -> bool:
+    if not session.participants:
+        return False
+    return all(session.selection_done.get(p.id, False) for p in session.participants)
+
+
+def ready_for_rating_phase(session: SessionRecord) -> bool:
+    """
+    The group can move to rating when at least MIN_PARTICIPANTS people are present,
+    there is at least one combined option, and everyone currently in the room has
+    finished their private list (even if the room is not full).
+    """
+    if len(session.participants) < MIN_PARTICIPANTS:
+        return False
+    if not session.options:
+        return False
+    return all_participants_finished_selection(session)
+
+
 def session_status(session: SessionRecord) -> SessionStatus:
     if has_full_ratings(session):
         return "results"
+    if ready_for_rating_phase(session):
+        return "rating"
     if len(session.participants) < session.max_participants:
         return "waiting"
-    if not session.options:
-        return "collecting"
-    return "rating"
+    return "collecting"
 
 
-def serialize_session(session: SessionRecord) -> SessionResponse:
+def serialize_session(session: SessionRecord, viewer_participant_id: str | None = None) -> SessionResponse:
+    status = session_status(session)
+    participants = [
+        ParticipantResponse(id=participant.id, label=participant.label)
+        for participant in session.participants
+    ]
+    all_options = [
+        FoodOptionResponse(
+            id=option.id,
+            name=option.name,
+            addedBy=option.added_by,
+            address=option.address,
+            googlePlaceId=option.google_place_id,
+            rating=option.rating,
+            userRatingCount=option.user_rating_count,
+            priceLevel=option.price_level_label,
+            phone=option.phone,
+            websiteUri=option.website_uri,
+            googleMapsUri=option.google_maps_uri,
+            openNow=option.open_now,
+        )
+        for option in session.options
+    ]
+
+    # Private lists as soon as more than one person is in the room (waiting or collecting).
+    # Solo host still sees their own options only via all_options (same set).
+    if (
+        viewer_participant_id
+        and status in ("waiting", "collecting")
+        and len(session.participants) > 1
+    ):
+        options = [option for option in all_options if option.addedBy == viewer_participant_id]
+    else:
+        options = all_options
+
+    selection_done = {
+        participant.id: session.selection_done.get(participant.id, False)
+        for participant in session.participants
+    }
+
     return SessionResponse(
         sessionId=session.session_id,
         joinCode=session.join_code,
-        status=session_status(session),
-        participants=[
-            ParticipantResponse(id=participant.id, label=participant.label)
-            for participant in session.participants
-        ],
-        options=[
-            FoodOptionResponse(id=option.id, name=option.name, addedBy=option.added_by)
-            for option in session.options
-        ],
+        status=status,
+        participants=participants,
+        options=options,
         ratings=session.ratings,
+        selectionDone=selection_done,
         maxParticipants=session.max_participants,
         isReadyForResults=has_full_ratings(session),
     )
@@ -224,9 +354,9 @@ def _broadcast(session: SessionRecord) -> None:
     consumers = _sse_consumers.get(session.session_id)
     if not consumers or _event_loop is None:
         return
-    data = serialize_session(session).model_dump_json()
-    for q in list(consumers):
-        _event_loop.call_soon_threadsafe(q.put_nowait, data)
+    for q, viewer_id in list(consumers):
+        payload = serialize_session(session, viewer_id).model_dump_json()
+        _event_loop.call_soon_threadsafe(q.put_nowait, payload)
 
 
 def compute_results(session: SessionRecord) -> list[RankedResult]:
@@ -283,12 +413,14 @@ def healthcheck() -> dict[str, bool | str]:
 
 
 @api.post("/sessions", response_model=SessionCreateResponse)
-def create_session(payload: CreateSessionRequest | None = None) -> SessionCreateResponse:
+def create_session(
+    payload: CreateSessionRequest = Body(default_factory=CreateSessionRequest),
+) -> SessionCreateResponse:
     with STORE_LOCK:
         session_id = create_identifier()
         participant_id = create_identifier()
         join_code = create_join_code()
-        participant_label = clean_display_name(payload.name if payload else None, "User 1")
+        participant_label = clean_display_name(payload.name, "User 1")
 
         session = SessionRecord(
             session_id=session_id,
@@ -297,11 +429,16 @@ def create_session(payload: CreateSessionRequest | None = None) -> SessionCreate
             participants=[Participant(id=participant_id, label=participant_label)],
             options=[],
             ratings={participant_id: {}},
+            selection_done={participant_id: False},
+            max_participants=payload.maxParticipants,
         )
         SESSIONS[session_id] = session
         JOIN_CODES[join_code] = session_id
 
-    return SessionCreateResponse(session=serialize_session(session), participantId=participant_id)
+    return SessionCreateResponse(
+        session=serialize_session(session, participant_id),
+        participantId=participant_id,
+    )
 
 
 @api.post("/sessions/join", response_model=SessionCreateResponse)
@@ -316,8 +453,20 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
 
         session = get_session_or_404(session_id)
 
+        room_phase = session_status(session)
+        if room_phase == "rating":
+            raise HTTPException(
+                status_code=400,
+                detail="This room is already rating—joining is closed. Start a new session when this one wraps up.",
+            )
+        if room_phase == "results":
+            raise HTTPException(
+                status_code=400,
+                detail="This session has finished—joining is closed.",
+            )
+
         if len(session.participants) >= session.max_participants:
-            raise HTTPException(status_code=400, detail="Session already has two participants")
+            raise HTTPException(status_code=400, detail="Session is full")
 
         participant_id = create_identifier()
         participant_label = clean_display_name(
@@ -326,45 +475,245 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
         )
         session.participants.append(Participant(id=participant_id, label=participant_label))
         session.ratings.setdefault(participant_id, {})
+        # Everyone must get a private picking round. Clears any "done" set solo
+        # (API allowed it while status was still waiting) so the room cannot jump to rating.
+        for participant in session.participants:
+            session.selection_done[participant.id] = False
 
     _broadcast(session)
-    return SessionCreateResponse(session=serialize_session(session), participantId=participant_id)
+    return SessionCreateResponse(
+        session=serialize_session(session, participant_id),
+        participantId=participant_id,
+    )
 
 
 @api.get("/sessions/{session_ref}", response_model=SessionResponse)
-def get_session(session_ref: str) -> SessionResponse:
-    return serialize_session(resolve_session_or_404(session_ref))
+def get_session(
+    session_ref: str,
+    participantId: str | None = Query(default=None),
+) -> SessionResponse:
+    return serialize_session(resolve_session_or_404(session_ref), participantId)
+
+
+PLACE_DETAILS_FIELD_MASK = (
+    "id,displayName,formattedAddress,rating,userRatingCount,priceLevel,"
+    "websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours,types"
+)
+
+
+def _format_price_level(value: str | int | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        by_num = {
+            0: "Free",
+            1: "$",
+            2: "$$",
+            3: "$$$",
+            4: "$$$$",
+        }
+        return by_num.get(value)
+    mapping = {
+        "PRICE_LEVEL_FREE": "Free",
+        "PRICE_LEVEL_INEXPENSIVE": "$",
+        "PRICE_LEVEL_MODERATE": "$$",
+        "PRICE_LEVEL_EXPENSIVE": "$$$",
+        "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$",
+    }
+    return mapping.get(value, str(value).replace("PRICE_LEVEL_", "").replace("_", " ").title())
+
+
+def _place_id_path_segment(place_id: str) -> str:
+    return quote(place_id.removeprefix("places/"), safe="")
+
+
+async def fetch_google_place_details(place_id: str) -> dict[str, Any] | None:
+    if not GOOGLE_PLACES_API_KEY or not place_id.strip():
+        return None
+    raw_id = place_id.strip()
+    url = f"https://places.googleapis.com/v1/places/{_place_id_path_segment(raw_id)}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+                    "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
+                },
+                timeout=8.0,
+            )
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except Exception:
+        return None
+
+
+def _details_to_option_fields(details: dict[str, Any]) -> dict[str, Any]:
+    display_name = (details.get("displayName") or {}).get("text")
+    rating = details.get("rating")
+    if rating is not None:
+        try:
+            rating = float(rating)
+        except (TypeError, ValueError):
+            rating = None
+    urc = details.get("userRatingCount")
+    if urc is not None:
+        try:
+            urc = int(urc)
+        except (TypeError, ValueError):
+            urc = None
+    hours = details.get("regularOpeningHours") or {}
+    open_now = hours.get("openNow")
+    if open_now is not None and not isinstance(open_now, bool):
+        open_now = None
+    return {
+        "name": display_name,
+        "address": details.get("formattedAddress"),
+        "google_place_id": details.get("id"),
+        "rating": rating,
+        "user_rating_count": urc,
+        "price_level_label": _format_price_level(details.get("priceLevel")),
+        "phone": details.get("nationalPhoneNumber"),
+        "website_uri": details.get("websiteUri"),
+        "google_maps_uri": details.get("googleMapsUri"),
+        "open_now": open_now,
+    }
 
 
 @api.post("/sessions/{session_id}/options", response_model=SessionResponse)
-def create_option(session_id: str, payload: AddOptionRequest) -> SessionResponse:
+async def create_option(session_id: str, payload: AddOptionRequest) -> SessionResponse:
     session = get_session_or_404(session_id)
     require_participant(session, payload.participantId)
 
-    candidate_name = " ".join(payload.name.split())
-    normalized_name = normalize_name(candidate_name)
-
-    if not normalized_name:
-        raise HTTPException(status_code=400, detail="Food option cannot be blank")
-
-    with STORE_LOCK:
-        existing_option = next(
-            (option for option in session.options if option.normalized_name == normalized_name),
-            None,
+    if session_status(session) in ("rating", "results"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot add options after the rating round has started",
         )
 
-        if existing_option is None:
-            session.options.append(
-                FoodOption(
-                    id=create_identifier(),
-                    name=candidate_name,
-                    normalized_name=normalized_name,
-                    added_by=payload.participantId,
-                )
+    candidate_name = " ".join(payload.name.split())
+    base_normalized = normalize_name(candidate_name)
+
+    if not base_normalized:
+        raise HTTPException(status_code=400, detail="Food option cannot be blank")
+
+    place_id = (payload.placeId or "").strip() or None
+    details_payload: dict[str, Any] | None = None
+    if place_id:
+        details_payload = await fetch_google_place_details(place_id)
+
+    option_kwargs: dict[str, Any] = {}
+    if details_payload:
+        fields = _details_to_option_fields(details_payload)
+        resolved_name = fields.get("name") or candidate_name
+        candidate_name = " ".join(resolved_name.split())
+        base_normalized = normalize_name(candidate_name)
+        if not base_normalized:
+            raise HTTPException(status_code=400, detail="Food option cannot be blank")
+        option_kwargs = {
+            "address": fields.get("address"),
+            "google_place_id": fields.get("google_place_id") or place_id,
+            "rating": fields.get("rating"),
+            "user_rating_count": fields.get("user_rating_count"),
+            "price_level_label": fields.get("price_level_label"),
+            "phone": fields.get("phone"),
+            "website_uri": fields.get("website_uri"),
+            "google_maps_uri": fields.get("google_maps_uri"),
+            "open_now": fields.get("open_now"),
+        }
+    elif place_id:
+        option_kwargs = {"google_place_id": place_id}
+
+    with STORE_LOCK:
+        normalized_name = unique_normalized_for_participant(
+            session,
+            payload.participantId,
+            base_normalized,
+        )
+
+        session.options.append(
+            FoodOption(
+                id=create_identifier(),
+                name=candidate_name,
+                normalized_name=normalized_name,
+                added_by=payload.participantId,
+                **option_kwargs,
             )
+        )
+
+        session.selection_done[payload.participantId] = False
 
     _broadcast(session)
-    return serialize_session(session)
+    return serialize_session(session, payload.participantId)
+
+
+@api.delete("/sessions/{session_id}/options/{option_id}", response_model=SessionResponse)
+def remove_option(
+    session_id: str,
+    option_id: str,
+    participant_id: str = Query(..., alias="participantId"),
+) -> SessionResponse:
+    session = get_session_or_404(session_id)
+    require_participant(session, participant_id)
+
+    if session_status(session) in ("rating", "results"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove options after the rating round has started",
+        )
+
+    with STORE_LOCK:
+        index: int | None = None
+        for i, option in enumerate(session.options):
+            if option.id == option_id:
+                index = i
+                break
+
+        if index is None:
+            raise HTTPException(status_code=404, detail="Option not found")
+
+        target = session.options[index]
+        if target.added_by != participant_id:
+            raise HTTPException(status_code=403, detail="You can only remove options you added")
+
+        session.options.pop(index)
+
+        for ratings_row in session.ratings.values():
+            ratings_row.pop(option_id, None)
+
+        my_remaining = [o for o in session.options if o.added_by == participant_id]
+        if not my_remaining:
+            session.selection_done[participant_id] = False
+
+    _broadcast(session)
+    return serialize_session(session, participant_id)
+
+
+@api.post("/sessions/{session_id}/selection/done", response_model=SessionResponse)
+def mark_selection_done(session_id: str, payload: SelectionDoneRequest) -> SessionResponse:
+    session = get_session_or_404(session_id)
+    require_participant(session, payload.participantId)
+
+    if session_status(session) in ("rating", "results"):
+        raise HTTPException(
+            status_code=400,
+            detail="Selection is already locked for this session",
+        )
+
+    with STORE_LOCK:
+        if payload.done:
+            my_options = [option for option in session.options if option.added_by == payload.participantId]
+            if not my_options:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Add at least one option before you finish choosing",
+                )
+
+        session.selection_done[payload.participantId] = payload.done
+
+    _broadcast(session)
+    return serialize_session(session, payload.participantId)
 
 
 @api.post("/sessions/{session_id}/ratings", response_model=SessionResponse)
@@ -392,7 +741,7 @@ def save_ratings(session_id: str, payload: SubmitRatingsRequest) -> SessionRespo
         }
 
     _broadcast(session)
-    return serialize_session(session)
+    return serialize_session(session, payload.participantId)
 
 
 @api.get("/sessions/{session_id}/results", response_model=ResultsResponse)
@@ -403,18 +752,22 @@ def get_results(session_id: str) -> ResultsResponse:
         return ResultsResponse(
             ready=False,
             results=[],
-            reason="Both participants must rate every option before results are available.",
+            reason="All participants must rate every option before results are available.",
         )
 
     return ResultsResponse(ready=True, results=compute_results(session))
 
 
 @api.get("/sessions/{session_id}/events")
-async def session_events(session_id: str) -> StreamingResponse:
+async def session_events(
+    session_id: str,
+    participantId: str | None = Query(default=None),
+) -> StreamingResponse:
     session = get_session_or_404(session_id)
     queue: asyncio.Queue[str] = asyncio.Queue()
-    _sse_consumers.setdefault(session_id, set()).add(queue)
-    initial = serialize_session(session).model_dump_json()
+    consumer_entry = (queue, participantId)
+    _sse_consumers.setdefault(session_id, set()).add(consumer_entry)
+    initial = serialize_session(session, participantId).model_dump_json()
 
     async def _generate():
         try:
@@ -428,7 +781,7 @@ async def session_events(session_id: str) -> StreamingResponse:
         finally:
             consumers = _sse_consumers.get(session_id)
             if consumers:
-                consumers.discard(queue)
+                consumers.discard(consumer_entry)
                 if not consumers:
                     del _sse_consumers[session_id]
 
@@ -489,16 +842,28 @@ async def get_suggestions(q: str = ""):
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://places.googleapis.com/v1/places:searchText",
+                "https://places.googleapis.com/v1/places:autocomplete",
                 headers={
                     "Content-Type": "application/json",
                     "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
-                    "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types",
+                    "X-Goog-FieldMask": (
+                        "suggestions.placePrediction.placeId,"
+                        "suggestions.placePrediction.text,"
+                        "suggestions.placePrediction.structuredFormat,"
+                        "suggestions.placePrediction.types"
+                    ),
                 },
                 json={
-                    "textQuery": query,
-                    "includedType": "restaurant",
-                    "maxResultCount": 5,
+                    "input": query,
+                    "languageCode": "en",
+                    "includeQueryPredictions": False,
+                    "includedPrimaryTypes": [
+                        "restaurant",
+                        "cafe",
+                        "bakery",
+                        "bar",
+                        "meal_takeaway",
+                    ],
                     "locationBias": {
                         "circle": {
                             "center": {"latitude": 1.3521, "longitude": 103.8198},
@@ -510,15 +875,30 @@ async def get_suggestions(q: str = ""):
             )
             data = resp.json()
 
-        results = []
-        for place in data.get("places", []):
+        if resp.status_code != 200:
+            return []
+
+        results: list[dict[str, object]] = []
+        for item in data.get("suggestions", []):
+            pp = item.get("placePrediction")
+            if not pp:
+                continue
+            types = pp.get("types") or []
+            structured = pp.get("structuredFormat") or {}
+            main_text = (structured.get("mainText") or {}).get("text") or ""
+            secondary_text = (structured.get("secondaryText") or {}).get("text") or ""
+            if not main_text:
+                main_text = (pp.get("text") or {}).get("text") or ""
+            food_type = _best_food_type(types) or "restaurant"
             results.append({
-                "placeId": place.get("id", ""),
-                "name": place.get("displayName", {}).get("text", ""),
-                "address": place.get("formattedAddress", ""),
-                "types": place.get("types", []),
+                "placeId": pp.get("placeId") or "",
+                "name": main_text,
+                "address": secondary_text,
+                "types": types,
+                "foodType": food_type,
             })
-        return results
+
+        return results[:5]
     except Exception:
         return []
 
