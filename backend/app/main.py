@@ -13,7 +13,7 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -66,6 +66,7 @@ class FoodOptionResponse(BaseModel):
     websiteUri: str | None = None
     googleMapsUri: str | None = None
     openNow: bool | None = None
+    photoUrl: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -78,6 +79,7 @@ class SessionResponse(BaseModel):
     selectionDone: dict[str, bool]
     maxParticipants: int
     isReadyForResults: bool
+    usedGooglePlaceIds: list[str]
 
 
 class SessionCreateResponse(BaseModel):
@@ -103,6 +105,10 @@ class AddOptionRequest(BaseModel):
     participantId: str
     name: str = Field(min_length=2, max_length=80)
     placeId: str | None = Field(default=None, max_length=256)
+
+
+class EnrichSuggestionsRequest(BaseModel):
+    placeIds: list[str] = Field(default_factory=list, max_length=24)
 
 
 class RatingEntry(BaseModel):
@@ -155,6 +161,8 @@ class FoodOption:
     website_uri: str | None = None
     google_maps_uri: str | None = None
     open_now: bool | None = None
+    # First Places API photo resource name (places/.../photos/...).
+    photo_media_name: str | None = None
 
 
 @dataclass
@@ -179,6 +187,29 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 
 def normalize_name(value: str) -> str:
     return " ".join(value.lower().split())
+
+
+def normalize_google_place_id(place_id: str | None) -> str | None:
+    """Canonical form for comparing Places API ids (e.g. ChIJ… vs places/ChIJ…)."""
+    if place_id is None:
+        return None
+    raw = str(place_id).strip()
+    if not raw:
+        return None
+    if raw.startswith("places/"):
+        raw = raw[len("places/") :]
+    return raw.strip() or None
+
+
+def collect_used_google_place_ids(session: SessionRecord) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for option in session.options:
+        key = normalize_google_place_id(option.google_place_id)
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    return ordered
 
 
 def unique_normalized_for_participant(
@@ -297,6 +328,12 @@ def session_status(session: SessionRecord) -> SessionStatus:
     return "collecting"
 
 
+def _photo_proxy_url(photo_media_name: str | None) -> str | None:
+    if not photo_media_name or not str(photo_media_name).strip():
+        return None
+    return f"/api/places/photo?name={quote(str(photo_media_name).strip(), safe='')}"
+
+
 def serialize_session(session: SessionRecord, viewer_participant_id: str | None = None) -> SessionResponse:
     status = session_status(session)
     participants = [
@@ -317,6 +354,7 @@ def serialize_session(session: SessionRecord, viewer_participant_id: str | None 
             websiteUri=option.website_uri,
             googleMapsUri=option.google_maps_uri,
             openNow=option.open_now,
+            photoUrl=_photo_proxy_url(option.photo_media_name),
         )
         for option in session.options
     ]
@@ -347,6 +385,7 @@ def serialize_session(session: SessionRecord, viewer_participant_id: str | None 
         selectionDone=selection_done,
         maxParticipants=session.max_participants,
         isReadyForResults=has_full_ratings(session),
+        usedGooglePlaceIds=collect_used_google_place_ids(session),
     )
 
 
@@ -497,8 +536,11 @@ def get_session(
 
 PLACE_DETAILS_FIELD_MASK = (
     "id,displayName,formattedAddress,rating,userRatingCount,priceLevel,"
-    "websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours,types"
+    "websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours,types,photos"
 )
+
+# Lighter mask for autocomplete enrichment (ratings only).
+SUGGESTION_ENRICH_FIELD_MASK = "rating,userRatingCount"
 
 
 def _format_price_level(value: str | int | None) -> str | None:
@@ -527,10 +569,23 @@ def _place_id_path_segment(place_id: str) -> str:
     return quote(place_id.removeprefix("places/"), safe="")
 
 
-async def fetch_google_place_details(place_id: str) -> dict[str, Any] | None:
+def _google_places_photo_media_url(photo_resource_name: str) -> str:
+    """Places Photo (New) expects path segments: /v1/places/{id}/photos/{ref}/media — not %2F-encoded slashes."""
+    parts = [p for p in photo_resource_name.strip().split("/") if p]
+    if not parts:
+        raise ValueError("empty photo resource name")
+    encoded = "/".join(quote(p, safe="") for p in parts)
+    return f"https://places.googleapis.com/v1/{encoded}/media"
+
+
+async def fetch_google_place_details(
+    place_id: str,
+    field_mask: str | None = None,
+) -> dict[str, Any] | None:
     if not GOOGLE_PLACES_API_KEY or not place_id.strip():
         return None
     raw_id = place_id.strip()
+    mask = field_mask if field_mask is not None else PLACE_DETAILS_FIELD_MASK
     url = f"https://places.googleapis.com/v1/places/{_place_id_path_segment(raw_id)}"
     try:
         async with httpx.AsyncClient() as client:
@@ -538,7 +593,7 @@ async def fetch_google_place_details(place_id: str) -> dict[str, Any] | None:
                 url,
                 headers={
                     "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
-                    "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
+                    "X-Goog-FieldMask": mask,
                 },
                 timeout=8.0,
             )
@@ -547,6 +602,62 @@ async def fetch_google_place_details(place_id: str) -> dict[str, Any] | None:
         return resp.json()
     except Exception:
         return None
+
+
+async def _fetch_suggestion_enrichment(place_id: str) -> dict[str, object]:
+    """Rating and review count for autocomplete rows."""
+    details = await fetch_google_place_details(place_id, SUGGESTION_ENRICH_FIELD_MASK)
+    if not details:
+        return {}
+    out: dict[str, object] = {}
+    rating = details.get("rating")
+    if rating is not None:
+        try:
+            out["rating"] = float(rating)
+        except (TypeError, ValueError):
+            pass
+    urc = details.get("userRatingCount")
+    if urc is not None:
+        try:
+            out["userRatingCount"] = int(urc)
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+@api.get("/places/photo")
+async def place_photo_media(
+    name: str = Query(
+        ...,
+        min_length=3,
+        description="Photo resource name from Places API (places/.../photos/...).",
+    ),
+) -> Response:
+    """Proxy Google Places photo media so the browser never needs the Places API key."""
+    if not GOOGLE_PLACES_API_KEY:
+        raise HTTPException(status_code=503, detail="Places API not configured")
+    trimmed = name.strip()
+    if not trimmed:
+        raise HTTPException(status_code=400, detail="Missing photo name")
+    try:
+        media_url = _google_places_photo_media_url(trimmed)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid photo name") from None
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                media_url,
+                params={"maxHeightPx": 800, "maxWidthPx": 800},
+                headers={"X-Goog-Api-Key": GOOGLE_PLACES_API_KEY},
+                timeout=20.0,
+                follow_redirects=True,
+            )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Photo fetch failed") from None
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Photo not available")
+    media_type = resp.headers.get("content-type", "image/jpeg")
+    return Response(content=resp.content, media_type=media_type)
 
 
 def _details_to_option_fields(details: dict[str, Any]) -> dict[str, Any]:
@@ -567,6 +678,14 @@ def _details_to_option_fields(details: dict[str, Any]) -> dict[str, Any]:
     open_now = hours.get("openNow")
     if open_now is not None and not isinstance(open_now, bool):
         open_now = None
+    photo_media_name: str | None = None
+    photos = details.get("photos") or []
+    if isinstance(photos, list) and photos:
+        first = photos[0]
+        if isinstance(first, dict):
+            raw_name = first.get("name")
+            if isinstance(raw_name, str) and raw_name.strip():
+                photo_media_name = raw_name.strip()
     return {
         "name": display_name,
         "address": details.get("formattedAddress"),
@@ -578,6 +697,7 @@ def _details_to_option_fields(details: dict[str, Any]) -> dict[str, Any]:
         "website_uri": details.get("websiteUri"),
         "google_maps_uri": details.get("googleMapsUri"),
         "open_now": open_now,
+        "photo_media_name": photo_media_name,
     }
 
 
@@ -621,11 +741,27 @@ async def create_option(session_id: str, payload: AddOptionRequest) -> SessionRe
             "website_uri": fields.get("website_uri"),
             "google_maps_uri": fields.get("google_maps_uri"),
             "open_now": fields.get("open_now"),
+            "photo_media_name": fields.get("photo_media_name"),
         }
     elif place_id:
         option_kwargs = {"google_place_id": place_id}
 
+    incoming_place_key: str | None = None
+    if option_kwargs.get("google_place_id"):
+        incoming_place_key = normalize_google_place_id(str(option_kwargs["google_place_id"]))
+    elif place_id:
+        incoming_place_key = normalize_google_place_id(place_id)
+
     with STORE_LOCK:
+        if incoming_place_key and any(
+            normalize_google_place_id(option.google_place_id) == incoming_place_key
+            for option in session.options
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="This place is already in the pool.",
+            )
+
         normalized_name = unique_normalized_for_participant(
             session,
             payload.participantId,
@@ -682,9 +818,7 @@ def remove_option(
         for ratings_row in session.ratings.values():
             ratings_row.pop(option_id, None)
 
-        my_remaining = [o for o in session.options if o.added_by == participant_id]
-        if not my_remaining:
-            session.selection_done[participant_id] = False
+        session.selection_done[participant_id] = False
 
     _broadcast(session)
     return serialize_session(session, participant_id)
@@ -898,9 +1032,52 @@ async def get_suggestions(q: str = ""):
                 "foodType": food_type,
             })
 
-        return results[:5]
+        return results[:8]
     except Exception:
         return []
+
+
+@api.post("/suggestions/enrich")
+async def enrich_suggestions(payload: EnrichSuggestionsRequest) -> dict[str, dict[str, float | int]]:
+    """Lazy-load Google ratings for autocomplete rows (after fast autocomplete)."""
+    if not GOOGLE_PLACES_API_KEY:
+        return {}
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for raw in payload.placeIds:
+        pid = (raw or "").strip()
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        unique.append(pid)
+        if len(unique) >= 24:
+            break
+
+    if not unique:
+        return {}
+
+    enriched = await asyncio.gather(*[_fetch_suggestion_enrichment(pid) for pid in unique])
+    out: dict[str, dict[str, float | int]] = {}
+    for pid, extra in zip(unique, enriched):
+        if not extra:
+            continue
+        row: dict[str, float | int] = {}
+        rating = extra.get("rating")
+        if rating is not None:
+            try:
+                row["rating"] = float(rating)
+            except (TypeError, ValueError):
+                pass
+        urc = extra.get("userRatingCount")
+        if urc is not None:
+            try:
+                row["userRatingCount"] = int(urc)
+            except (TypeError, ValueError):
+                pass
+        if row:
+            out[pid] = row
+    return out
 
 
 app.include_router(api)

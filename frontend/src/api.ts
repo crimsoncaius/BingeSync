@@ -18,6 +18,8 @@ export interface FoodOption {
   websiteUri?: string | null
   googleMapsUri?: string | null
   openNow?: boolean | null
+  /** Place photo URL (often `/api/places/photo?...` proxied from Google Places). */
+  photoUrl?: string | null
 }
 
 export interface RankedResult {
@@ -38,6 +40,8 @@ export interface SessionResponse {
   selectionDone: Record<string, boolean>
   maxParticipants: number
   isReadyForResults: boolean
+  /** Normalized Google Place IDs already in this session (any participant). */
+  usedGooglePlaceIds?: string[]
 }
 
 export interface SessionCreateResponse {
@@ -164,14 +168,50 @@ export interface PlaceSuggestion {
   address: string
   types: string[]
   foodType: string
+  /** Google average rating when Places details were fetched. */
+  rating?: number | null
+  userRatingCount?: number | null
 }
 
-export async function fetchSuggestions(query: string): Promise<PlaceSuggestion[]> {
+export type SuggestionEnrichmentPatch = Pick<PlaceSuggestion, 'rating' | 'userRatingCount'>
+
+export function isAbortError(e: unknown): boolean {
+  return (
+    (e instanceof DOMException && e.name === 'AbortError') ||
+    (e instanceof Error && e.name === 'AbortError')
+  )
+}
+
+export async function fetchSuggestions(query: string, init?: RequestInit): Promise<PlaceSuggestion[]> {
   try {
-    const res = await fetch(`${API_BASE}/suggestions?q=${encodeURIComponent(query)}`)
+    const res = await fetch(`${API_BASE}/suggestions?q=${encodeURIComponent(query)}`, init)
     if (!res.ok) return []
     return (await res.json()) as PlaceSuggestion[]
-  } catch {
+  } catch (e) {
+    if (isAbortError(e)) throw e
     return []
+  }
+}
+
+/** Lazy-load Google ratings after autocomplete (does not block the suggestion list). */
+export async function fetchSuggestionEnrichment(
+  placeIds: string[],
+  init?: RequestInit,
+): Promise<Record<string, SuggestionEnrichmentPatch>> {
+  if (placeIds.length === 0) {
+    return {}
+  }
+  try {
+    const res = await fetch(`${API_BASE}/suggestions/enrich`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ placeIds }),
+      signal: init?.signal,
+    })
+    if (!res.ok) return {}
+    return (await res.json()) as Record<string, SuggestionEnrichmentPatch>
+  } catch (e) {
+    if (isAbortError(e)) throw e
+    return {}
   }
 }
