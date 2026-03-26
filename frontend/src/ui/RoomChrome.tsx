@@ -33,7 +33,7 @@ function Avatar({ label }: { label: string }) {
   const initials = (label || '?').slice(0, 2).toUpperCase()
   return (
     <div
-      className="w-10 h-10 rounded-full border-2 border-primary-container bg-secondary-container text-on-secondary-container flex items-center justify-center text-xs font-bold shadow-sm shrink-0"
+      className="w-10 h-10 rounded-full border-2 border-primary-container bg-secondary-container text-on-secondary-container flex items-center justify-center text-xs font-bold shadow-xs shrink-0"
       aria-hidden
     >
       {initials}
@@ -61,7 +61,7 @@ export function RoomChrome({
   function sideNavClass(phase: FlowStepKey) {
     const isActive = activePhase === phase
     if (isActive) {
-      return 'bg-primary-container text-white rounded-lg px-4 py-2 flex items-center gap-3 shadow-sm'
+      return 'bg-primary-container text-white rounded-lg px-4 py-2 flex items-center gap-3 shadow-xs'
     }
     return 'text-[#515c73] dark:text-slate-300 px-4 py-2 hover:bg-[#d7e2ff] dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-3'
   }
@@ -77,14 +77,14 @@ export function RoomChrome({
   function bottomNavClass(phase: FlowStepKey) {
     const isActive = activePhase === phase
     if (isActive) {
-      return 'flex flex-col items-center justify-center bg-[#ff785a] text-white rounded-xl p-2 scale-90 duration-200 min-w-[4.5rem]'
+      return 'flex flex-col items-center justify-center bg-[#ff785a] text-white rounded-xl p-2 scale-90 duration-200 min-w-18'
     }
-    return 'flex flex-col items-center justify-center text-[#515c73] dark:text-slate-400 p-2 hover:bg-[#f1f7fd] transition-all min-w-[4rem]'
+    return 'flex flex-col items-center justify-center text-[#515c73] dark:text-slate-400 p-2 hover:bg-[#f1f7fd] transition-all min-w-16'
   }
 
   return (
     <div className="bg-surface text-on-surface font-body min-h-screen flex flex-col md:flex-row overflow-x-hidden">
-      <aside className="hidden md:flex flex-col h-screen w-64 p-4 bg-[#eaf2f9] dark:bg-slate-800 shrink-0 sticky top-0">
+      <aside className="hidden md:flex flex-col h-screen w-64 p-4 bg-surface-container-low dark:bg-slate-800 shrink-0 sticky top-0">
         <div className="mb-8 px-4">
           <span className="text-lg font-black text-[#515c73] font-headline">BingeSync</span>
           <div className="mt-4">
@@ -172,7 +172,7 @@ export function RoomChrome({
 
         <nav
           aria-label="Session phases"
-          className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-[#ffffff] dark:bg-slate-950 rounded-t-xl shadow-[0_-4px_20px_rgba(41,48,52,0.06)]"
+          className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-surface-container-lowest dark:bg-slate-950 rounded-t-xl shadow-[0_-4px_20px_rgba(41,48,52,0.06)]"
         >
           <div className={bottomNavClass('choose')}>
             <NavIcon name="ads_click" filled={activePhase === 'choose'} />

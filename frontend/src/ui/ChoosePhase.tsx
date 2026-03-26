@@ -100,7 +100,7 @@ export function ChoosePhase({
   }
 
   return (
-    <div className="flex-grow p-4 md:p-8 lg:p-12 max-w-5xl mx-auto w-full pb-32 md:pb-12">
+    <div className="grow p-4 md:p-8 lg:p-12 max-w-5xl mx-auto w-full pb-32 md:pb-12">
       <section className="mb-12">
         <header className="mb-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 font-headline">
@@ -137,7 +137,7 @@ export function ChoosePhase({
         ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-7 bg-surface-container-lowest rounded-xl p-6 shadow-sm relative">
+          <div className="lg:col-span-7 bg-surface-container-lowest rounded-xl p-6 shadow-xs relative">
             <div className="absolute top-0 left-0 w-1 h-full bg-primary-container rounded-l-xl" />
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2 font-headline">
               <span className="material-symbols-outlined text-primary">add_circle</span>
@@ -145,7 +145,7 @@ export function ChoosePhase({
             </h3>
             <form className="relative mb-6" onSubmit={onAddSubmit}>
               <div className="flex gap-2">
-                <div className="relative flex-grow" ref={autocompleteRef}>
+                <div className="relative grow" ref={autocompleteRef}>
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-outline pointer-events-none">
                     search
                   </span>
@@ -190,7 +190,7 @@ export function ChoosePhase({
                                 <div className="flex items-center gap-2 min-w-0">
                                   <p className="font-bold text-sm truncate">{s.name}</p>
                                   {alreadyInPool ? (
-                                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-secondary bg-secondary-container/50 px-1.5 py-0.5 rounded">
+                                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-secondary bg-secondary-container/50 px-1.5 py-0.5 rounded-sm">
                                       In pool
                                     </span>
                                   ) : null}
@@ -235,7 +235,7 @@ export function ChoosePhase({
                   ) : null}
                 </div>
                 <button
-                  className="bg-gradient-to-br from-primary to-primary-container text-white px-6 py-3 rounded-lg font-bold hover:scale-105 transition-transform disabled:opacity-50 shrink-0"
+                  className="bg-linear-to-br from-primary to-primary-container text-white px-6 py-3 rounded-lg font-bold hover:scale-105 transition-transform disabled:opacity-50 shrink-0"
                   disabled={busy || optionInput.trim().length < 2}
                   type="submit"
                 >
@@ -246,13 +246,13 @@ export function ChoosePhase({
           </div>
 
           <div className="lg:col-span-5 flex flex-col gap-4">
-            <div className="bg-surface-container-lowest rounded-xl p-6 shadow-sm flex-grow border-t-4 border-secondary">
+            <div className="bg-surface-container-lowest rounded-xl p-6 shadow-xs grow border-t-4 border-secondary">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-bold flex items-center gap-2 font-headline">
                   <span className="material-symbols-outlined text-secondary">visibility_off</span>
                   My Private List
                 </h3>
-                <span className="bg-secondary-container text-on-secondary-container text-[10px] font-bold px-2 py-1 rounded">
+                <span className="bg-secondary-container text-on-secondary-container text-[10px] font-bold px-2 py-1 rounded-sm">
                   {session.options.length} {session.options.length === 1 ? 'ITEM' : 'ITEMS'}
                 </span>
               </div>
@@ -273,7 +273,7 @@ export function ChoosePhase({
 
             {canShowDoneFlow ? (
               <button
-                className="w-full py-4 bg-gradient-to-r from-primary to-primary-container text-white rounded-xl font-extrabold text-lg shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed disabled:shadow-none"
+                className="w-full py-4 bg-linear-to-r from-primary to-primary-container text-white rounded-xl font-extrabold text-lg shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed disabled:shadow-none"
                 disabled={
                   busy || session.options.length === 0 || selectionDone[participantId]
                 }
@@ -293,7 +293,7 @@ export function ChoosePhase({
           className="w-full h-full object-cover mix-blend-overlay opacity-40"
           src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=1200&q=80"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-surface-container-highest to-transparent" />
+        <div className="absolute inset-0 bg-linear-to-t from-surface-container-highest to-transparent" />
         <div className="absolute bottom-6 left-6">
           <h4 className="text-xl font-bold text-on-surface font-headline">Curating the perfect bite</h4>
           <p className="text-sm text-secondary">

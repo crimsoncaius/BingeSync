@@ -71,7 +71,7 @@ export function LandingPage({
         <div className="w-16 md:w-0" aria-hidden />
       </nav>
 
-      <main className="flex-grow container mx-auto px-4 py-12 md:py-24 max-w-6xl">
+      <main className="grow container mx-auto px-4 py-12 md:py-24 max-w-6xl">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-6 space-y-8">
             <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-secondary-container rounded-full text-secondary text-sm font-semibold">
@@ -230,7 +230,7 @@ export function LandingPage({
       <footer className="bg-surface-container-low pt-12 pb-24 md:pb-12">
         <div className="container mx-auto px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="flex items-center gap-4 bg-surface-container-lowest px-6 py-3 rounded-full shadow-sm max-w-full">
+            <div className="flex items-center gap-4 bg-surface-container-lowest px-6 py-3 rounded-full shadow-xs max-w-full">
               <span className="material-symbols-outlined text-primary shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
                 history
               </span>
@@ -258,7 +258,7 @@ export function LandingPage({
 
       <nav
         aria-hidden
-        className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-[#ffffff] dark:bg-slate-950 shadow-[0_-4px_20px_rgba(41,48,52,0.06)] rounded-t-xl"
+        className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-surface-container-lowest dark:bg-slate-950 shadow-[0_-4px_20px_rgba(41,48,52,0.06)] rounded-t-xl"
       >
         <div className="flex flex-col items-center justify-center bg-[#ff785a] text-white rounded-xl p-2 active:scale-90 duration-200">
           <span className="material-symbols-outlined">ads_click</span>

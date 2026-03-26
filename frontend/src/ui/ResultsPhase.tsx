@@ -100,7 +100,7 @@ export function ResultsPhase({
   return (
     <div className="flex-1 max-w-6xl mx-auto w-full px-4 md:px-8 py-6 space-y-8 pb-28 md:pb-8">
         <>
-          <section className="relative overflow-hidden rounded-xl bg-surface-container-lowest shadow-sm">
+          <section className="relative overflow-hidden rounded-xl bg-surface-container-lowest shadow-xs">
             <div className="flex flex-col lg:flex-row">
               <div className="lg:w-2/3 p-8 md:p-12 relative z-10 flex flex-col justify-center">
                 <div className="inline-flex items-center gap-2 bg-primary-container/20 text-primary px-4 py-1 rounded-full mb-6 w-fit">
@@ -156,7 +156,7 @@ export function ResultsPhase({
                     e.currentTarget.src = foodImageForIndex(0)
                   }}
                 />
-                <div className="absolute inset-0 bg-gradient-to-r from-surface-container-lowest via-transparent to-transparent lg:block hidden" />
+                <div className="absolute inset-0 bg-linear-to-r from-surface-container-lowest via-transparent to-transparent lg:block hidden" />
                 <div className="absolute bottom-6 right-6 glass-panel p-4 rounded-xl border border-outline-variant/20 shadow-xl">
                   <div className="text-center">
                     <span className="block text-4xl font-headline font-black text-primary">
