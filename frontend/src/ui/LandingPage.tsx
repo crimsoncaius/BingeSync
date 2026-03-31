@@ -195,7 +195,7 @@ export function LandingPage({
         </div>
       </nav>
 
-      <main className="flex-grow container mx-auto px-4 py-12 md:py-24 max-w-6xl">
+      <main className="grow container mx-auto px-4 py-12 md:py-24 max-w-6xl">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
           <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-32">
             <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-secondary-container rounded-full text-secondary text-sm font-semibold">
@@ -401,7 +401,7 @@ export function LandingPage({
                             className={[
                               "py-2 text-xs font-bold rounded-md transition-colors",
                               active
-                                ? "bg-surface-container-high shadow-sm text-primary"
+                                ? "bg-surface-container-high shadow-xs text-primary"
                                 : "text-on-surface-variant hover:bg-surface-container-high/70",
                             ].join(" ")}
                             disabled={busy}

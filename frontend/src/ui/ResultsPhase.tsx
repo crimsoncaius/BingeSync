@@ -403,7 +403,7 @@ export function ResultsPhase({
                   className="flex items-center justify-between gap-4 p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container transition-colors"
                 >
                   <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-surface-container">
+                    <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-surface-container">
                       {thumb ? (
                         <img
                           alt=""

@@ -8,11 +8,14 @@ backend/**/*.pyc
 
 frontend/node_modules/W
 frontend/dist/
+frontend/build/
 
-places-autocomplete-playground/node_modules/
-places-autocomplete-playground/dist/
 places-autocomplete-playground
+
+.cursor/
+.agents/
 
 .env
 .env.local
 .vercel/
+.vercel

@@ -47,8 +47,8 @@
         "Screens",
         "Landing"
       ],
-      "locStart": 38,
-      "locEnd": 38,
+      "locStart": 63,
+      "locEnd": 63,
       "filePath": "src/stories/landing.stories.tsx",
       "namedExport": "Default",
       "meta": {}
