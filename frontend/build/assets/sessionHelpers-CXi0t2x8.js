@@ -1,1 +1,0 @@
-function c(r,e){if(r.options.length===0)return!1;const i=r.ratings[e]??{};return r.options.every(o=>{const t=i[o.id];return Number.isInteger(t)&&t>=0&&t<=10})}function s(r,e,i){const o=r.ratings[e]??{};return r.options.every(t=>{const n=o[t.id],a=i[t.id];return Number.isInteger(n)&&n>=0&&n<=10&&a===n})}export{c as p,s as r};
