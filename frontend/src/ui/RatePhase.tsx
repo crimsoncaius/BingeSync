@@ -142,7 +142,7 @@ export function RatePhase({
           </p>
         </div>
         <button
-          className="w-full md:w-auto px-10 py-4 bg-gradient-to-br from-primary to-primary-container text-white rounded-xl font-bold text-lg shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
+          className="w-full md:w-auto px-10 py-4 bg-linear-to-br from-primary to-primary-container text-white rounded-xl font-bold text-lg shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
           disabled={doneButtonDisabled}
           onClick={onSubmitRatings}
           type="button"

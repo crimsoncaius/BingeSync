@@ -1,58 +1,64 @@
-import { useRef, type ClipboardEvent, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
-import type { PlaceSuggestion, SessionSearchBias } from '../api'
-import { ThemeToggle } from '../theme'
+import {
+  useRef,
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
+import type { PlaceSuggestion, SessionSearchBias } from "../api";
+import { ThemeToggle } from "../theme";
 
-const JOIN_CODE_LEN = 6
+const JOIN_CODE_LEN = 6;
 
 type PendingAction =
-  | 'restore'
-  | 'create'
-  | 'join'
-  | 'refresh'
-  | 'add-option'
-  | 'remove-option'
-  | 'mark-selection-done'
-  | 'submit-ratings'
-  | 'load-results'
-  | null
+  | "restore"
+  | "create"
+  | "join"
+  | "refresh"
+  | "add-option"
+  | "remove-option"
+  | "mark-selection-done"
+  | "submit-ratings"
+  | "load-results"
+  | null;
 
-const HOST_MIN = 2
-const HOST_MAX = 10
+const HOST_MIN = 2;
+const HOST_MAX = 10;
 
 function renderActionLabel(
   pendingAction: PendingAction,
-  expectedAction: Exclude<PendingAction, 'restore' | null>,
+  expectedAction: Exclude<PendingAction, "restore" | null>,
   idleLabel: string,
   busyLabel: string,
 ) {
-  return pendingAction === expectedAction ? busyLabel : idleLabel
+  return pendingAction === expectedAction ? busyLabel : idleLabel;
 }
 
 export interface LandingPageProps {
-  userNameInput: string
-  setUserNameInput: (v: string) => void
-  joinCodeInput: string
-  setJoinCodeInput: (v: string) => void
-  hostMaxParticipants: number
-  setHostMaxParticipants: (n: number) => void
-  hostRoomTitle: string
-  setHostRoomTitle: (v: string) => void
-  hostMaxPicksPerParticipant: number | null
-  setHostMaxPicksPerParticipant: (v: number | null) => void
-  hostAreaInput: string
-  setHostAreaInput: (v: string) => void
-  hostAreaSuggestions: PlaceSuggestion[]
-  hostAreaShowSuggestions: boolean
-  setHostAreaShowSuggestions: (v: boolean) => void
-  hostAreaRef: RefObject<HTMLDivElement | null>
-  hostSearchBias: SessionSearchBias | null
-  onClearHostSearchBias: () => void
-  onInvalidateHostSearchBias: () => void
-  onHostAreaSuggestionPick: (s: PlaceSuggestion) => void
-  onCreate: () => void
-  onJoinSubmit: (e: FormEvent<HTMLFormElement>) => void
-  pendingAction: PendingAction
-  busy: boolean
+  userNameInput: string;
+  setUserNameInput: (v: string) => void;
+  joinCodeInput: string;
+  setJoinCodeInput: (v: string) => void;
+  hostMaxParticipants: number;
+  setHostMaxParticipants: (n: number) => void;
+  hostRoomTitle: string;
+  setHostRoomTitle: (v: string) => void;
+  hostMaxPicksPerParticipant: number | null;
+  setHostMaxPicksPerParticipant: (v: number | null) => void;
+  hostAreaInput: string;
+  setHostAreaInput: (v: string) => void;
+  hostAreaSuggestions: PlaceSuggestion[];
+  hostAreaShowSuggestions: boolean;
+  setHostAreaShowSuggestions: (v: boolean) => void;
+  hostAreaRef: RefObject<HTMLDivElement | null>;
+  hostSearchBias: SessionSearchBias | null;
+  onClearHostSearchBias: () => void;
+  onInvalidateHostSearchBias: () => void;
+  onHostAreaSuggestionPick: (s: PlaceSuggestion) => void;
+  onCreate: () => void;
+  onJoinSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  pendingAction: PendingAction;
+  busy: boolean;
 }
 
 export function LandingPage({
@@ -81,61 +87,79 @@ export function LandingPage({
   pendingAction,
   busy,
 }: LandingPageProps) {
-  const year = new Date().getFullYear()
-  const joinCodeRefs = useRef<(HTMLInputElement | null)[]>([])
+  const year = new Date().getFullYear();
+  const joinCodeRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   function bumpHost(delta: number) {
-    setHostMaxParticipants(Math.min(HOST_MAX, Math.max(HOST_MIN, hostMaxParticipants + delta)))
+    setHostMaxParticipants(
+      Math.min(HOST_MAX, Math.max(HOST_MIN, hostMaxParticipants + delta)),
+    );
   }
 
   function joinCharAt(index: number): string {
-    return joinCodeInput[index] ?? ''
+    return joinCodeInput[index] ?? "";
   }
 
   function setJoinCodeFromSlots(next: string) {
-    setJoinCodeInput(next.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, JOIN_CODE_LEN))
+    setJoinCodeInput(
+      next
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, JOIN_CODE_LEN),
+    );
   }
 
   function handleJoinSlotChange(index: number, raw: string) {
-    const last = raw.slice(-1).toUpperCase().replace(/[^A-Z0-9]/g, '')
-    const prefix = joinCodeInput.slice(0, index)
-    const suffix = joinCodeInput.slice(index + 1)
+    const last = raw
+      .slice(-1)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+    const prefix = joinCodeInput.slice(0, index);
+    const suffix = joinCodeInput.slice(index + 1);
     if (last) {
-      setJoinCodeFromSlots(prefix + last + suffix)
+      setJoinCodeFromSlots(prefix + last + suffix);
       if (index < JOIN_CODE_LEN - 1) {
-        joinCodeRefs.current[index + 1]?.focus()
+        joinCodeRefs.current[index + 1]?.focus();
       }
-      return
+      return;
     }
-    setJoinCodeFromSlots(prefix + suffix)
+    setJoinCodeFromSlots(prefix + suffix);
   }
 
-  function handleJoinSlotKeyDown(index: number, e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Backspace' && joinCharAt(index) === '') {
-      e.preventDefault()
+  function handleJoinSlotKeyDown(
+    index: number,
+    e: KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (e.key === "Backspace" && joinCharAt(index) === "") {
+      e.preventDefault();
       if (index > 0) {
-        const next = joinCodeInput.slice(0, index - 1) + joinCodeInput.slice(index)
-        setJoinCodeFromSlots(next)
-        joinCodeRefs.current[index - 1]?.focus()
+        const next =
+          joinCodeInput.slice(0, index - 1) + joinCodeInput.slice(index);
+        setJoinCodeFromSlots(next);
+        joinCodeRefs.current[index - 1]?.focus();
       }
-      return
+      return;
     }
-    if (e.key === 'ArrowLeft' && index > 0) {
-      e.preventDefault()
-      joinCodeRefs.current[index - 1]?.focus()
+    if (e.key === "ArrowLeft" && index > 0) {
+      e.preventDefault();
+      joinCodeRefs.current[index - 1]?.focus();
     }
-    if (e.key === 'ArrowRight' && index < JOIN_CODE_LEN - 1) {
-      e.preventDefault()
-      joinCodeRefs.current[index + 1]?.focus()
+    if (e.key === "ArrowRight" && index < JOIN_CODE_LEN - 1) {
+      e.preventDefault();
+      joinCodeRefs.current[index + 1]?.focus();
     }
   }
 
   function handleJoinCodePaste(e: ClipboardEvent<HTMLInputElement>) {
-    e.preventDefault()
-    const text = e.clipboardData.getData('text').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, JOIN_CODE_LEN)
-    setJoinCodeFromSlots(text)
-    const focusIndex = Math.min(text.length, JOIN_CODE_LEN - 1)
-    joinCodeRefs.current[focusIndex]?.focus()
+    e.preventDefault();
+    const text = e.clipboardData
+      .getData("text")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, JOIN_CODE_LEN);
+    setJoinCodeFromSlots(text);
+    const focusIndex = Math.min(text.length, JOIN_CODE_LEN - 1);
+    joinCodeRefs.current[focusIndex]?.focus();
   }
 
   return (
@@ -147,7 +171,9 @@ export function LandingPage({
           </span>
         </div>
         <div className="hidden md:flex items-center gap-8">
-          <span className="text-primary font-bold border-b-2 border-primary">Home</span>
+          <span className="text-primary font-bold border-b-2 border-primary">
+            Home
+          </span>
           <span className="text-secondary hover:text-primary transition-colors cursor-default">
             How it Works
           </span>
@@ -173,31 +199,52 @@ export function LandingPage({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
           <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-32">
             <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-secondary-container rounded-full text-secondary text-sm font-semibold">
-              <span className="material-symbols-outlined text-sm">restaurant</span>
+              <span className="material-symbols-outlined text-sm">
+                restaurant
+              </span>
               <span>No more food fighting</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-on-surface leading-[1.1] font-headline">
-              Decide What to Eat <span className="text-primary">Without the Argument.</span>
+              Decide What to Eat{" "}
+              <span className="text-primary">Without the Argument.</span>
             </h1>
             <p className="text-lg md:text-xl text-on-surface-variant max-w-lg leading-relaxed">
-              Fast, private picking, anonymous rating, and one clear winner. Sync your appetites
-              effortlessly with BingeSync.
+              Fast, private picking, anonymous rating, and one clear winner.
+              Sync your appetites effortlessly with BingeSync.
             </p>
             <div className="flex flex-col sm:flex-row gap-6 pt-4">
               <div className="flex flex-col items-start gap-1">
-                <span className="material-symbols-outlined text-tertiary">speed</span>
-                <span className="text-sm font-bold text-on-surface">Ultra Fast</span>
-                <span className="text-xs text-on-surface-variant">Setup in seconds</span>
+                <span className="material-symbols-outlined text-tertiary">
+                  speed
+                </span>
+                <span className="text-sm font-bold text-on-surface">
+                  Ultra Fast
+                </span>
+                <span className="text-xs text-on-surface-variant">
+                  Setup in seconds
+                </span>
               </div>
               <div className="flex flex-col items-start gap-1">
-                <span className="material-symbols-outlined text-tertiary">lock</span>
-                <span className="text-sm font-bold text-on-surface">Private</span>
-                <span className="text-xs text-on-surface-variant">Anonymous rating</span>
+                <span className="material-symbols-outlined text-tertiary">
+                  lock
+                </span>
+                <span className="text-sm font-bold text-on-surface">
+                  Private
+                </span>
+                <span className="text-xs text-on-surface-variant">
+                  Anonymous rating
+                </span>
               </div>
               <div className="flex flex-col items-start gap-1">
-                <span className="material-symbols-outlined text-tertiary">trophy</span>
-                <span className="text-sm font-bold text-on-surface">Winner Found</span>
-                <span className="text-xs text-on-surface-variant">Algorithmic sync</span>
+                <span className="material-symbols-outlined text-tertiary">
+                  trophy
+                </span>
+                <span className="text-sm font-bold text-on-surface">
+                  Winner Found
+                </span>
+                <span className="text-xs text-on-surface-variant">
+                  Algorithmic sync
+                </span>
               </div>
             </div>
           </div>
@@ -210,7 +257,9 @@ export function LandingPage({
                   <span className="material-symbols-outlined">add_box</span>
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold font-headline mb-2">Create a Room</h3>
+                  <h3 className="text-2xl font-bold font-headline mb-2">
+                    Create a Room
+                  </h3>
                   <p className="text-on-surface-variant text-sm">
                     Host a session and invite your group to sync up.
                   </p>
@@ -246,7 +295,8 @@ export function LandingPage({
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-secondary uppercase tracking-widest">
-                      Search near <span className="font-normal opacity-70">(optional)</span>
+                      Search near{" "}
+                      <span className="font-normal opacity-70">(optional)</span>
                     </label>
                     <div className="relative" ref={hostAreaRef}>
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-outline pointer-events-none text-lg">
@@ -254,23 +304,27 @@ export function LandingPage({
                       </span>
                       <input
                         className={`w-full pl-10 py-3 bg-surface-container-low border-0 rounded-lg focus:ring-2 focus:ring-primary-container text-sm font-medium ${
-                          hostSearchBias ? 'pr-16' : 'pr-4'
+                          hostSearchBias ? "pr-16" : "pr-4"
                         }`}
                         disabled={busy}
                         onChange={(e) => {
-                          const v = e.target.value
+                          const v = e.target.value;
                           if (!v.trim()) {
-                            onClearHostSearchBias()
-                            return
+                            onClearHostSearchBias();
+                            return;
                           }
                           if (hostSearchBias) {
-                            onInvalidateHostSearchBias()
+                            onInvalidateHostSearchBias();
                           }
-                          setHostAreaInput(v)
+                          setHostAreaInput(v);
                         }}
-                        onFocus={() => hostAreaSuggestions.length > 0 && setHostAreaShowSuggestions(true)}
+                        onFocus={() =>
+                          hostAreaSuggestions.length > 0 &&
+                          setHostAreaShowSuggestions(true)
+                        }
                         onKeyDown={(e) => {
-                          if (e.key === 'Escape') setHostAreaShowSuggestions(false)
+                          if (e.key === "Escape")
+                            setHostAreaShowSuggestions(false);
                         }}
                         placeholder="Place or area in Singapore"
                         type="text"
@@ -286,7 +340,8 @@ export function LandingPage({
                           Clear
                         </button>
                       ) : null}
-                      {hostAreaShowSuggestions && hostAreaSuggestions.length > 0 ? (
+                      {hostAreaShowSuggestions &&
+                      hostAreaSuggestions.length > 0 ? (
                         <div className="absolute left-0 right-0 top-full z-50 mt-1 bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/10 shadow-lg">
                           <div className="px-4 py-2 border-b border-outline-variant/10">
                             <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">
@@ -298,18 +353,25 @@ export function LandingPage({
                               <button
                                 className="w-full text-left p-3 flex items-center justify-between transition-colors group hover:bg-surface-container cursor-pointer disabled:opacity-50"
                                 disabled={busy || !s.placeId}
-                                key={s.placeId ? s.placeId : `area-${s.name}-${index}`}
+                                key={
+                                  s.placeId
+                                    ? s.placeId
+                                    : `area-${s.name}-${index}`
+                                }
                                 onMouseDown={(e) => {
-                                  e.preventDefault()
-                                  if (!busy && s.placeId) onHostAreaSuggestionPick(s)
+                                  e.preventDefault();
+                                  if (!busy && s.placeId)
+                                    onHostAreaSuggestionPick(s);
                                 }}
                                 type="button"
                               >
                                 <div className="min-w-0">
-                                  <p className="font-bold text-sm truncate">{s.name}</p>
+                                  <p className="font-bold text-sm truncate">
+                                    {s.name}
+                                  </p>
                                   <p className="text-[11px] text-secondary truncate mt-0.5">
-                                    {s.foodType.replace(/_/g, ' ')}
-                                    {s.address ? ` · ${s.address}` : ''}
+                                    {s.foodType.replace(/_/g, " ")}
+                                    {s.address ? ` · ${s.address}` : ""}
                                   </p>
                                 </div>
                                 <span className="material-symbols-outlined text-primary-container opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
@@ -322,7 +384,8 @@ export function LandingPage({
                       ) : null}
                     </div>
                     <p className="text-[11px] text-on-surface-variant leading-snug">
-                      Restaurant suggestions while picking will favor this area. Leave blank for the default region.
+                      Restaurant suggestions while picking will favor this area.
+                      Leave blank for the default region.
                     </p>
                   </div>
                   <div className="space-y-1.5">
@@ -331,32 +394,32 @@ export function LandingPage({
                     </span>
                     <div className="grid grid-cols-3 gap-2 bg-surface-container-low p-1 rounded-lg">
                       {([3, 5, 10] as const).map((n) => {
-                        const active = hostMaxPicksPerParticipant === n
+                        const active = hostMaxPicksPerParticipant === n;
                         return (
                           <button
                             key={n}
                             className={[
-                              'py-2 text-xs font-bold rounded-md transition-colors',
+                              "py-2 text-xs font-bold rounded-md transition-colors",
                               active
-                                ? 'bg-surface-container-high shadow-sm text-primary'
-                                : 'text-on-surface-variant hover:bg-surface-container-high/70',
-                            ].join(' ')}
+                                ? "bg-surface-container-high shadow-sm text-primary"
+                                : "text-on-surface-variant hover:bg-surface-container-high/70",
+                            ].join(" ")}
                             disabled={busy}
                             onClick={() => setHostMaxPicksPerParticipant(n)}
                             type="button"
                           >
                             {n}
                           </button>
-                        )
+                        );
                       })}
                     </div>
                     <button
                       className={[
-                        'text-xs font-semibold w-full text-left',
+                        "text-xs font-semibold w-full text-left",
                         hostMaxPicksPerParticipant === null
-                          ? 'text-primary'
-                          : 'text-on-surface-variant hover:text-primary',
-                      ].join(' ')}
+                          ? "text-primary"
+                          : "text-on-surface-variant hover:text-primary",
+                      ].join(" ")}
                       disabled={busy}
                       onClick={() => setHostMaxPicksPerParticipant(null)}
                       type="button"
@@ -375,10 +438,13 @@ export function LandingPage({
                         onClick={() => bumpHost(-1)}
                         type="button"
                       >
-                        <span className="material-symbols-outlined text-secondary">remove</span>
+                        <span className="material-symbols-outlined text-secondary">
+                          remove
+                        </span>
                       </button>
                       <span className="text-lg font-bold">
-                        {hostMaxParticipants} {hostMaxParticipants === 1 ? 'Person' : 'People'}
+                        {hostMaxParticipants}{" "}
+                        {hostMaxParticipants === 1 ? "Person" : "People"}
                       </span>
                       <button
                         className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container-highest transition-colors disabled:opacity-50"
@@ -386,7 +452,9 @@ export function LandingPage({
                         onClick={() => bumpHost(1)}
                         type="button"
                       >
-                        <span className="material-symbols-outlined text-secondary">add</span>
+                        <span className="material-symbols-outlined text-secondary">
+                          add
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -396,7 +464,12 @@ export function LandingPage({
                     onClick={onCreate}
                     type="button"
                   >
-                    {renderActionLabel(pendingAction, 'create', 'Start Room', 'Starting…')}
+                    {renderActionLabel(
+                      pendingAction,
+                      "create",
+                      "Start Room",
+                      "Starting…",
+                    )}
                     <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">
                       arrow_forward
                     </span>
@@ -414,8 +487,12 @@ export function LandingPage({
                   <span className="material-symbols-outlined">group_add</span>
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold font-headline mb-2">Join a Room</h3>
-                  <p className="text-on-surface-variant text-sm">Enter the code shared by your friend.</p>
+                  <h3 className="text-2xl font-bold font-headline mb-2">
+                    Join a Room
+                  </h3>
+                  <p className="text-on-surface-variant text-sm">
+                    Enter the code shared by your friend.
+                  </p>
                 </div>
                 <div className="space-y-4">
                   <div className="space-y-1.5">
@@ -441,14 +518,16 @@ export function LandingPage({
                         <input
                           key={i}
                           ref={(el) => {
-                            joinCodeRefs.current[i] = el
+                            joinCodeRefs.current[i] = el;
                           }}
                           aria-label={`Code character ${i + 1} of ${JOIN_CODE_LEN}`}
                           className="w-full bg-surface-container-low border-0 text-center font-bold text-xl h-12 rounded-lg focus:ring-2 focus:ring-secondary uppercase min-w-0"
                           disabled={busy}
                           inputMode="text"
                           maxLength={1}
-                          onChange={(e) => handleJoinSlotChange(i, e.target.value)}
+                          onChange={(e) =>
+                            handleJoinSlotChange(i, e.target.value)
+                          }
                           onKeyDown={(e) => handleJoinSlotKeyDown(i, e)}
                           onPaste={handleJoinCodePaste}
                           value={joinCharAt(i)}
@@ -461,7 +540,12 @@ export function LandingPage({
                     disabled={busy || joinCodeInput.length < JOIN_CODE_LEN}
                     type="submit"
                   >
-                    {renderActionLabel(pendingAction, 'join', 'Join Now', 'Joining…')}
+                    {renderActionLabel(
+                      pendingAction,
+                      "join",
+                      "Join Now",
+                      "Joining…",
+                    )}
                   </button>
                 </div>
               </div>
@@ -477,23 +561,32 @@ export function LandingPage({
       <footer className="bg-surface-container-low pt-12 pb-24 md:pb-12">
         <div className="container mx-auto px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="flex items-center gap-4 bg-surface-container-lowest px-6 py-3 rounded-full shadow-sm max-w-full">
-              <span className="material-symbols-outlined text-primary shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+            <div className="flex items-center gap-4 bg-surface-container-lowest px-6 py-3 rounded-full shadow-xs max-w-full">
+              <span
+                className="material-symbols-outlined text-primary shrink-0"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
                 history
               </span>
               <p className="text-sm text-on-surface-variant font-medium">
-                Session Restoration: <span className="text-on-surface font-bold">Active.</span> We&apos;ll
-                remember where you left off.
+                Session Restoration:{" "}
+                <span className="text-on-surface font-bold">Active.</span>{" "}
+                We&apos;ll remember where you left off.
               </p>
             </div>
             <div className="flex gap-8 md:gap-12 text-sm font-bold text-secondary flex-wrap justify-center">
-              <span className="hover:text-primary cursor-default">Privacy Policy</span>
-              <span className="hover:text-primary cursor-default">Terms of Service</span>
+              <span className="hover:text-primary cursor-default">
+                Privacy Policy
+              </span>
+              <span className="hover:text-primary cursor-default">
+                Terms of Service
+              </span>
               <span className="hover:text-primary cursor-default">Contact</span>
             </div>
           </div>
           <div className="mt-12 text-center text-on-surface-variant text-xs opacity-50">
-            © {year} BingeSync. All rights reserved. Crafted for indecisive eaters everywhere.
+            © {year} BingeSync. All rights reserved. Crafted for indecisive
+            eaters everywhere.
           </div>
         </div>
       </footer>
@@ -517,9 +610,11 @@ export function LandingPage({
         </div>
         <div className="flex flex-col items-center justify-center text-secondary p-2 hover:bg-surface-container-low">
           <span className="material-symbols-outlined">emoji_events</span>
-          <span className="text-[11px] font-medium font-body mt-1">Results</span>
+          <span className="text-[11px] font-medium font-body mt-1">
+            Results
+          </span>
         </div>
       </nav>
     </div>
-  )
+  );
 }
