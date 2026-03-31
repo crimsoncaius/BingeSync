@@ -42,6 +42,7 @@ GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
 SessionStatus = Literal["waiting", "collecting", "rating", "results"]
 MIN_PARTICIPANTS = 2
+MAX_PICKS_PER_PARTICIPANT_CAP = 25
 MAX_PARTICIPANTS_CAP = 10
 DEFAULT_MAX_PARTICIPANTS = MIN_PARTICIPANTS
 JOIN_CODE_LENGTH = 6
@@ -69,6 +70,12 @@ class FoodOptionResponse(BaseModel):
     photoUrl: str | None = None
 
 
+class SessionSearchBias(BaseModel):
+    latitude: float
+    longitude: float
+    label: str | None = None
+
+
 class SessionResponse(BaseModel):
     sessionId: str
     joinCode: str
@@ -80,6 +87,9 @@ class SessionResponse(BaseModel):
     maxParticipants: int
     isReadyForResults: bool
     usedGooglePlaceIds: list[str]
+    title: str | None = None
+    maxPicksPerParticipant: int | None = None
+    searchBias: SessionSearchBias | None = None
 
 
 class SessionCreateResponse(BaseModel):
@@ -94,6 +104,15 @@ class CreateSessionRequest(BaseModel):
         ge=MIN_PARTICIPANTS,
         le=MAX_PARTICIPANTS_CAP,
     )
+    title: str | None = Field(default=None, max_length=80)
+    maxPicksPerParticipant: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_PICKS_PER_PARTICIPANT_CAP,
+    )
+    searchBiasLatitude: float | None = None
+    searchBiasLongitude: float | None = None
+    searchBiasLabel: str | None = Field(default=None, max_length=120)
 
 
 class JoinSessionRequest(BaseModel):
@@ -111,9 +130,15 @@ class EnrichSuggestionsRequest(BaseModel):
     placeIds: list[str] = Field(default_factory=list, max_length=24)
 
 
+class PlaceLocationResponse(BaseModel):
+    latitude: float
+    longitude: float
+    label: str | None = None
+
+
 class RatingEntry(BaseModel):
     optionId: str
-    score: int = Field(ge=1, le=10)
+    score: int = Field(ge=0, le=10)
 
 
 class SubmitRatingsRequest(BaseModel):
@@ -132,6 +157,8 @@ class RankedResult(BaseModel):
     averageScore: float
     disagreementPenalty: float
     finalScore: float
+    """1-based competition rank; equal ``finalScore`` => same rank, next rank skips."""
+    rank: int
 
 
 class ResultsResponse(BaseModel):
@@ -175,6 +202,11 @@ class SessionRecord:
     ratings: dict[str, dict[str, int]]
     selection_done: dict[str, bool]
     max_participants: int = DEFAULT_MAX_PARTICIPANTS
+    title: str | None = None
+    max_picks_per_participant: int | None = None
+    search_bias_latitude: float | None = None
+    search_bias_longitude: float | None = None
+    search_bias_label: str | None = None
 
 
 SESSIONS: dict[str, SessionRecord] = {}
@@ -238,6 +270,62 @@ def clean_display_name(value: str | None, fallback: str) -> str:
 
     cleaned = " ".join(value.split())
     return cleaned[:40] if cleaned else fallback
+
+
+def clean_title(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(str(value).split())
+    return cleaned[:80] if cleaned else None
+
+
+def clean_search_bias_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(str(value).split())
+    return cleaned[:120] if cleaned else None
+
+
+def parse_create_session_search_bias(payload: CreateSessionRequest) -> tuple[float | None, float | None, str | None]:
+    lat, lng = payload.searchBiasLatitude, payload.searchBiasLongitude
+    label = clean_search_bias_label(payload.searchBiasLabel)
+    if lat is None and lng is None:
+        return None, None, label
+    if lat is None or lng is None:
+        raise HTTPException(
+            status_code=400,
+            detail="searchBiasLatitude and searchBiasLongitude must be sent together",
+        )
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
+        raise HTTPException(status_code=400, detail="Invalid search bias coordinates")
+    return lat, lng, label
+
+
+DEFAULT_SEARCH_BIAS_RADIUS_M = 20000.0
+DEFAULT_SEARCH_BIAS_CENTER = {"latitude": 1.3521, "longitude": 103.8198}
+
+
+def _default_location_bias_circle() -> dict[str, Any]:
+    return {
+        "circle": {
+            "center": dict(DEFAULT_SEARCH_BIAS_CENTER),
+            "radius": DEFAULT_SEARCH_BIAS_RADIUS_M,
+        }
+    }
+
+
+def _session_search_location_bias(session: SessionRecord | None) -> dict[str, Any]:
+    if session is None:
+        return _default_location_bias_circle()
+    lat, lng = session.search_bias_latitude, session.search_bias_longitude
+    if lat is not None and lng is not None:
+        return {
+            "circle": {
+                "center": {"latitude": lat, "longitude": lng},
+                "radius": DEFAULT_SEARCH_BIAS_RADIUS_M,
+            }
+        }
+    return _default_location_bias_circle()
 
 
 def now_utc() -> datetime:
@@ -375,6 +463,15 @@ def serialize_session(session: SessionRecord, viewer_participant_id: str | None 
         for participant in session.participants
     }
 
+    sb_lat, sb_lng = session.search_bias_latitude, session.search_bias_longitude
+    search_bias: SessionSearchBias | None = None
+    if sb_lat is not None and sb_lng is not None:
+        search_bias = SessionSearchBias(
+            latitude=sb_lat,
+            longitude=sb_lng,
+            label=session.search_bias_label,
+        )
+
     return SessionResponse(
         sessionId=session.session_id,
         joinCode=session.join_code,
@@ -386,6 +483,9 @@ def serialize_session(session: SessionRecord, viewer_participant_id: str | None 
         maxParticipants=session.max_participants,
         isReadyForResults=has_full_ratings(session),
         usedGooglePlaceIds=collect_used_google_place_ids(session),
+        title=session.title,
+        maxPicksPerParticipant=session.max_picks_per_participant,
+        searchBias=search_bias,
     )
 
 
@@ -417,14 +517,28 @@ def compute_results(session: SessionRecord) -> list[RankedResult]:
                 averageScore=round(average_score, 2),
                 disagreementPenalty=round(disagreement_penalty, 2),
                 finalScore=round(final_score, 2),
+                rank=0,
             )
         )
 
-    return sorted(
+    ordered = sorted(
         ranked_results,
         key=lambda result: (result.finalScore, result.averageScore, -result.disagreementPenalty),
         reverse=True,
     )
+
+    out: list[RankedResult] = []
+    last_rank = 1
+    for i, row in enumerate(ordered):
+        if i == 0:
+            rank = 1
+        elif row.finalScore < ordered[i - 1].finalScore:
+            rank = i + 1
+        else:
+            rank = last_rank
+        last_rank = rank
+        out.append(row.model_copy(update={"rank": rank}))
+    return out
 
 
 app = FastAPI(title="BingeSync API")
@@ -455,6 +569,8 @@ def healthcheck() -> dict[str, bool | str]:
 def create_session(
     payload: CreateSessionRequest = Body(default_factory=CreateSessionRequest),
 ) -> SessionCreateResponse:
+    sb_lat, sb_lng, sb_label = parse_create_session_search_bias(payload)
+
     with STORE_LOCK:
         session_id = create_identifier()
         participant_id = create_identifier()
@@ -470,6 +586,11 @@ def create_session(
             ratings={participant_id: {}},
             selection_done={participant_id: False},
             max_participants=payload.maxParticipants,
+            title=clean_title(payload.title),
+            max_picks_per_participant=payload.maxPicksPerParticipant,
+            search_bias_latitude=sb_lat,
+            search_bias_longitude=sb_lng,
+            search_bias_label=sb_label if sb_lat is not None else None,
         )
         SESSIONS[session_id] = session
         JOIN_CODES[join_code] = session_id
@@ -541,6 +662,8 @@ PLACE_DETAILS_FIELD_MASK = (
 
 # Lighter mask for autocomplete enrichment (ratings only).
 SUGGESTION_ENRICH_FIELD_MASK = "rating,userRatingCount"
+
+PLACE_LOCATION_FIELD_MASK = "location,displayName"
 
 
 def _format_price_level(value: str | int | None) -> str | None:
@@ -660,6 +783,36 @@ async def place_photo_media(
     return Response(content=resp.content, media_type=media_type)
 
 
+@api.get("/places/location", response_model=PlaceLocationResponse)
+async def place_location_for_bias(
+    placeId: str = Query(..., min_length=4, max_length=256),
+):
+    """Resolve a Place ID to coordinates for optional room search bias."""
+    if not GOOGLE_PLACES_API_KEY:
+        raise HTTPException(status_code=503, detail="Places API not configured")
+    details = await fetch_google_place_details(placeId.strip(), PLACE_LOCATION_FIELD_MASK)
+    if not details:
+        raise HTTPException(status_code=404, detail="Place not found")
+    loc = details.get("location")
+    if not isinstance(loc, dict):
+        raise HTTPException(status_code=404, detail="Place has no coordinates")
+    lat, lng = loc.get("latitude"), loc.get("longitude")
+    if lat is None or lng is None:
+        raise HTTPException(status_code=404, detail="Place has no coordinates")
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Place has no coordinates") from None
+    disp = details.get("displayName")
+    label: str | None = None
+    if isinstance(disp, dict):
+        raw = disp.get("text")
+        if isinstance(raw, str) and raw.strip():
+            label = clean_search_bias_label(raw)
+    return PlaceLocationResponse(latitude=lat_f, longitude=lng_f, label=label)
+
+
 def _details_to_option_fields(details: dict[str, Any]) -> dict[str, Any]:
     display_name = (details.get("displayName") or {}).get("text")
     rating = details.get("rating")
@@ -717,6 +870,15 @@ async def create_option(session_id: str, payload: AddOptionRequest) -> SessionRe
 
     if not base_normalized:
         raise HTTPException(status_code=400, detail="Food option cannot be blank")
+
+    pick_limit = session.max_picks_per_participant
+    if pick_limit is not None:
+        my_count = sum(1 for option in session.options if option.added_by == payload.participantId)
+        if my_count >= pick_limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"You can add at most {pick_limit} picks in this room.",
+            )
 
     place_id = (payload.placeId or "").strip() or None
     details_payload: dict[str, Any] | None = None
@@ -967,13 +1129,58 @@ def _best_food_type(types: list[str]) -> str | None:
     return None
 
 
-@api.get("/suggestions")
-async def get_suggestions(q: str = ""):
-    query = q.strip()
-    if not query or not GOOGLE_PLACES_API_KEY:
-        return []
+AREA_KIND_ORDER = (
+    "neighborhood",
+    "sublocality",
+    "sublocality_level_1",
+    "locality",
+    "postal_town",
+    "administrative_area_level_1",
+)
 
+
+def _best_area_kind(types: list[str]) -> str:
+    for t in AREA_KIND_ORDER:
+        if t in types:
+            return t
+    for t in types:
+        if t not in ("political", "geocode"):
+            return t
+    return "place"
+
+
+FOOD_AUTOCOMPLETE_PRIMARY_TYPES = [
+    "restaurant",
+    "cafe",
+    "bakery",
+    "bar",
+    "meal_takeaway",
+]
+
+async def _google_places_autocomplete(
+    query: str,
+    *,
+    included_primary_types: list[str] | None = None,
+    location_bias: dict[str, Any] | None = None,
+    food: bool,
+    included_region_codes: list[str] | None = None,
+    region_code: str | None = None,
+) -> list[dict[str, object]]:
     try:
+        body: dict[str, Any] = {
+            "input": query,
+            "languageCode": "en",
+            "includeQueryPredictions": False,
+        }
+        if included_primary_types:
+            body["includedPrimaryTypes"] = included_primary_types
+        if location_bias is not None:
+            body["locationBias"] = location_bias
+        if included_region_codes:
+            body["includedRegionCodes"] = included_region_codes
+        if region_code:
+            body["regionCode"] = region_code
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 "https://places.googleapis.com/v1/places:autocomplete",
@@ -987,24 +1194,7 @@ async def get_suggestions(q: str = ""):
                         "suggestions.placePrediction.types"
                     ),
                 },
-                json={
-                    "input": query,
-                    "languageCode": "en",
-                    "includeQueryPredictions": False,
-                    "includedPrimaryTypes": [
-                        "restaurant",
-                        "cafe",
-                        "bakery",
-                        "bar",
-                        "meal_takeaway",
-                    ],
-                    "locationBias": {
-                        "circle": {
-                            "center": {"latitude": 1.3521, "longitude": 103.8198},
-                            "radius": 20000.0,
-                        }
-                    },
-                },
+                json=body,
                 timeout=5.0,
             )
             data = resp.json()
@@ -1018,23 +1208,77 @@ async def get_suggestions(q: str = ""):
             if not pp:
                 continue
             types = pp.get("types") or []
+            if not isinstance(types, list):
+                types = []
             structured = pp.get("structuredFormat") or {}
             main_text = (structured.get("mainText") or {}).get("text") or ""
             secondary_text = (structured.get("secondaryText") or {}).get("text") or ""
             if not main_text:
                 main_text = (pp.get("text") or {}).get("text") or ""
-            food_type = _best_food_type(types) or "restaurant"
+            if food:
+                kind = _best_food_type(types) or "restaurant"
+            else:
+                kind = _best_area_kind(types)
             results.append({
                 "placeId": pp.get("placeId") or "",
                 "name": main_text,
                 "address": secondary_text,
                 "types": types,
-                "foodType": food_type,
+                "foodType": kind,
             })
 
         return results[:8]
     except Exception:
         return []
+
+
+@api.get("/suggestions")
+async def get_suggestions(
+    q: str = "",
+    sessionId: str | None = Query(default=None),
+):
+    query = q.strip()
+    if not query or not GOOGLE_PLACES_API_KEY:
+        return []
+
+    session: SessionRecord | None = None
+    sid = (sessionId or "").strip()
+    if sid:
+        session = get_session_or_404(sid)
+
+    location_bias = _session_search_location_bias(session)
+    has_host_area = (
+        session is not None
+        and session.search_bias_latitude is not None
+        and session.search_bias_longitude is not None
+    )
+    return await _google_places_autocomplete(
+        query,
+        included_primary_types=FOOD_AUTOCOMPLETE_PRIMARY_TYPES,
+        location_bias=location_bias,
+        food=True,
+        included_region_codes=(None if has_host_area else ["SG"]),
+        region_code=(None if has_host_area else "SG"),
+    )
+
+
+@api.get("/suggestions/area")
+async def get_suggestions_area(q: str = ""):
+    """Autocomplete places for optional room search bias (host only, pre-session).
+
+    Results are limited and biased to Singapore (region + default map center).
+    """
+    query = q.strip()
+    if not query or not GOOGLE_PLACES_API_KEY:
+        return []
+
+    return await _google_places_autocomplete(
+        query,
+        food=False,
+        location_bias=_default_location_bias_circle(),
+        included_region_codes=["SG"],
+        region_code="SG",
+    )
 
 
 @api.post("/suggestions/enrich")

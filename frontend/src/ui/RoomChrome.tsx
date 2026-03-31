@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react'
 import type { FlowStepKey } from '../sessionHelpers'
+import { ThemeToggle } from '../theme'
 
 export interface RoomChromeProps {
   joinCode: string
   participantCount: number
   maxParticipants: number
+  /** Shown in the room sidebar / header when the host set an occasion title. */
+  roomTitle?: string | null
+  /** Subline when the host set a map search bias (e.g. city). */
+  searchAreaHint?: string | null
   participantLabel: string
   activePhase: FlowStepKey
   onRefresh: () => void
@@ -45,6 +50,8 @@ export function RoomChrome({
   joinCode,
   participantCount,
   maxParticipants,
+  roomTitle,
+  searchAreaHint,
   participantLabel,
   activePhase,
   onRefresh,
@@ -63,38 +70,48 @@ export function RoomChrome({
     if (isActive) {
       return 'bg-primary-container text-white rounded-lg px-4 py-2 flex items-center gap-3 shadow-sm'
     }
-    return 'text-[#515c73] dark:text-slate-300 px-4 py-2 hover:bg-[#d7e2ff] dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-3'
+    return 'text-secondary px-4 py-2 hover:bg-secondary-container rounded-lg transition-all flex items-center gap-3'
   }
 
   function topLinkClass(phase: FlowStepKey) {
     const isActive = activePhase === phase
     if (isActive) {
-      return 'text-[#b22200] font-bold border-b-2 border-[#b22200] transition-colors'
+      return 'text-primary font-bold border-b-2 border-primary transition-colors'
     }
-    return 'text-[#515c73] dark:text-slate-400 hover:text-[#b22200] transition-colors font-medium'
+    return 'text-secondary hover:text-primary transition-colors font-medium'
   }
 
   function bottomNavClass(phase: FlowStepKey) {
     const isActive = activePhase === phase
     if (isActive) {
-      return 'flex flex-col items-center justify-center bg-[#ff785a] text-white rounded-xl p-2 scale-90 duration-200 min-w-[4.5rem]'
+      return 'flex flex-col items-center justify-center bg-primary-container text-white rounded-xl p-2 scale-90 duration-200 min-w-[4.5rem]'
     }
-    return 'flex flex-col items-center justify-center text-[#515c73] dark:text-slate-400 p-2 hover:bg-[#f1f7fd] transition-all min-w-[4rem]'
+    return 'flex flex-col items-center justify-center text-secondary p-2 hover:bg-surface-container-low transition-all min-w-[4rem]'
   }
 
   return (
     <div className="bg-surface text-on-surface font-body min-h-screen flex flex-col md:flex-row overflow-x-hidden">
-      <aside className="hidden md:flex flex-col h-screen w-64 p-4 bg-[#eaf2f9] dark:bg-slate-800 shrink-0 sticky top-0">
+      <aside className="hidden md:flex flex-col h-screen w-64 p-4 bg-surface-container-low shrink-0 sticky top-0">
         <div className="mb-8 px-4">
-          <span className="text-lg font-black text-[#515c73] font-headline">BingeSync</span>
+          <span className="text-lg font-black text-secondary font-headline">BingeSync</span>
           <div className="mt-4">
             <h2 className="font-headline font-bold text-on-surface">Room</h2>
-            <p className="text-xs text-secondary-dim font-body">
+            {roomTitle ? (
+              <p className="text-xs font-semibold text-primary mt-0.5 truncate" title={roomTitle}>
+                {roomTitle}
+              </p>
+            ) : null}
+            {searchAreaHint ? (
+              <p className="text-[10px] text-on-surface-variant mt-0.5 truncate" title={searchAreaHint}>
+                Near {searchAreaHint}
+              </p>
+            ) : null}
+            <p className="text-xs text-secondary-dim font-body mt-0.5">
               Code: {joinCode} ({participantCount}/{maxParticipants} People)
             </p>
           </div>
           <button
-            className="mt-4 w-full py-2 px-4 bg-secondary text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all disabled:opacity-50"
+            className="mt-4 w-full py-2 px-4 bg-secondary text-on-secondary rounded-lg text-sm font-medium hover:opacity-90 transition-all disabled:opacity-50"
             disabled={busy}
             onClick={onCopyCode}
             type="button"
@@ -126,12 +143,20 @@ export function RoomChrome({
       </aside>
 
       <main className="flex-1 flex flex-col min-h-screen pb-24 md:pb-0">
-        <header className="flex justify-between items-center w-full px-6 py-4 max-w-full bg-[#f1f7fd] dark:bg-slate-900 sticky top-0 z-40">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xl font-bold tracking-tight text-[#b22200] dark:text-[#ff785a] font-headline shrink-0">
+        <header className="flex justify-between items-center w-full px-6 py-4 max-w-full bg-surface sticky top-0 z-40 border-b border-outline-variant/10">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            <span className="text-xl font-bold tracking-tight text-primary font-headline shrink-0">
               BingeSync
             </span>
-            <div className="hidden md:flex items-center gap-6 ml-4">
+            {roomTitle ? (
+              <span
+                className="text-xs font-semibold text-primary truncate min-w-0 max-w-[6rem] sm:max-w-[10rem] md:max-w-[14rem]"
+                title={roomTitle}
+              >
+                {roomTitle}
+              </span>
+            ) : null}
+            <div className="hidden md:flex items-center gap-6 ml-4 shrink-0">
               {phaseOrder.map((p) => (
                 <span key={p} className={topLinkClass(p)}>
                   {p === 'choose' ? 'Choose' : p === 'rating' ? 'Rate' : 'Results'}
@@ -139,9 +164,10 @@ export function RoomChrome({
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-2 md:gap-4 shrink-0">
+          <div className="flex items-center gap-0 md:gap-1 shrink-0">
+            <ThemeToggle />
             <button
-              className="text-[#515c73] hover:text-[#b22200] transition-colors p-2 disabled:opacity-50"
+              className="text-secondary hover:text-primary transition-colors p-2 disabled:opacity-50"
               disabled={busy}
               onClick={onRefresh}
               title="Refresh"
@@ -150,7 +176,7 @@ export function RoomChrome({
               <span className="material-symbols-outlined">refresh</span>
             </button>
             <button
-              className="text-[#515c73] hover:text-[#b22200] transition-colors p-2 disabled:opacity-50"
+              className="text-secondary hover:text-primary transition-colors p-2 disabled:opacity-50"
               disabled={busy}
               onClick={onLeave}
               title="Leave session"
@@ -172,7 +198,7 @@ export function RoomChrome({
 
         <nav
           aria-label="Session phases"
-          className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-[#ffffff] dark:bg-slate-950 rounded-t-xl shadow-[0_-4px_20px_rgba(41,48,52,0.06)]"
+          className="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-4 pt-2 bg-surface-container-lowest rounded-t-xl shadow-[0_-4px_20px_rgba(15,24,32,0.08)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.35)]"
         >
           <div className={bottomNavClass('choose')}>
             <NavIcon name="ads_click" filled={activePhase === 'choose'} />

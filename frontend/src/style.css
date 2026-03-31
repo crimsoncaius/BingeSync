@@ -1,10 +1,21 @@
+@import './theme-vars.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply font-body text-on-surface antialiased;
+    @apply font-body text-on-surface antialiased bg-background min-h-screen;
+  }
+}
+
+@layer utilities {
+  .shadow-card {
+    box-shadow: 0 12px 32px rgba(41, 48, 52, 0.06);
+  }
+  .dark .shadow-card {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.42);
   }
 }
 
@@ -13,16 +24,22 @@
 }
 
 .glass-panel {
-  background: rgba(241, 247, 253, 0.7);
+  background: rgb(var(--color-surface) / 0.72);
   backdrop-filter: blur(20px);
 }
 
-.orange-gradient-cta {
-  background: linear-gradient(135deg, #b22200 0%, #ff785a 100%);
+.dark .glass-panel {
+  background: rgb(var(--color-surface-container-low) / 0.75);
 }
 
+.orange-gradient-cta,
+.primary-gradient,
 .btn-gradient {
-  background: linear-gradient(135deg, #b22200 0%, #ff785a 100%);
+  background: linear-gradient(
+    135deg,
+    rgb(var(--color-primary-dim)) 0%,
+    rgb(var(--color-primary-container)) 100%
+  );
 }
 
 .no-scrollbar::-webkit-scrollbar {

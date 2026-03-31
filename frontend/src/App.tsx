@@ -5,6 +5,8 @@ import {
   addOption,
   removeOption,
   createSession,
+  fetchAreaSuggestions,
+  fetchPlaceBiasLocation,
   fetchResults,
   fetchSession,
   fetchSuggestions,
@@ -16,6 +18,7 @@ import {
   type PlaceSuggestion,
   type RankedResult,
   type SessionResponse,
+  type SessionSearchBias,
 } from './api'
 import { normalizeGooglePlaceId } from './placeId'
 import { flowPhaseFromStatus } from './sessionHelpers'
@@ -76,6 +79,8 @@ export default function App() {
   const [userNameInput, setUserNameInput] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [hostMaxParticipants, setHostMaxParticipants] = useState(2)
+  const [hostRoomTitle, setHostRoomTitle] = useState('')
+  const [hostMaxPicksPerParticipant, setHostMaxPicksPerParticipant] = useState<number | null>(5)
   const [optionInput, setOptionInput] = useState('')
   const [ratings, setRatings] = useState<Record<string, number>>({})
   const [results, setResults] = useState<RankedResult[]>([])
@@ -88,6 +93,12 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const autocompleteRef = useRef<HTMLDivElement>(null)
   const optionListRef = useRef<HTMLDivElement>(null)
+
+  const [hostAreaInput, setHostAreaInput] = useState('')
+  const [hostAreaSuggestions, setHostAreaSuggestions] = useState<PlaceSuggestion[]>([])
+  const [hostAreaShowSuggestions, setHostAreaShowSuggestions] = useState(false)
+  const [hostSearchBias, setHostSearchBias] = useState<SessionSearchBias | null>(null)
+  const hostAreaRef = useRef<HTMLDivElement>(null)
 
   const busy = pendingAction !== null
 
@@ -176,7 +187,10 @@ export default function App() {
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const resultsList = await fetchSuggestions(query, { signal: controller.signal })
+          const resultsList = await fetchSuggestions(query, {
+            signal: controller.signal,
+            sessionId: session?.sessionId,
+          })
           if (controller.signal.aborted) return
           const slice = resultsList.slice(0, 8)
           setSuggestions(slice)
@@ -213,12 +227,42 @@ export default function App() {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [optionInput])
+  }, [optionInput, session?.sessionId])
+
+  useEffect(() => {
+    const query = hostAreaInput.trim()
+    if (query.length < 2) {
+      setHostAreaSuggestions([])
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const list = await fetchAreaSuggestions(query, controller.signal)
+          if (controller.signal.aborted) return
+          setHostAreaSuggestions(list.slice(0, 8))
+          setHostAreaShowSuggestions(true)
+        } catch (e: unknown) {
+          if (isAbortError(e)) return
+        }
+      })()
+    }, 300)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [hostAreaInput])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
         setShowSuggestions(false)
+      }
+      if (hostAreaRef.current && !hostAreaRef.current.contains(e.target as Node)) {
+        setHostAreaShowSuggestions(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -237,7 +281,7 @@ export default function App() {
     session.options.length > 0 &&
     session.options.every((option) => {
       const score = ratings[option.id]
-      return Number.isInteger(score) && score >= 1 && score <= 10
+      return Number.isInteger(score) && score >= 0 && score <= 10
     })
 
   async function refreshSession(
@@ -267,11 +311,44 @@ export default function App() {
     }
   }
 
+  async function handleHostAreaSuggestionPick(suggestion: PlaceSuggestion) {
+    if (busy) {
+      return
+    }
+    const pid = suggestion.placeId?.trim()
+    if (!pid) {
+      return
+    }
+    try {
+      setError('')
+      const loc = await fetchPlaceBiasLocation(pid)
+      if (!loc) {
+        setError('Could not resolve that location. Try another place or leave this blank.')
+        return
+      }
+      setHostSearchBias({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        label: loc.label ?? suggestion.name,
+      })
+      const line = [suggestion.name, suggestion.address].filter(Boolean).join(', ')
+      setHostAreaInput(line)
+      setHostAreaSuggestions([])
+      setHostAreaShowSuggestions(false)
+    } catch (pickError) {
+      setError(pickError instanceof Error ? pickError.message : 'Could not resolve location')
+    }
+  }
+
   async function handleCreateSession() {
     try {
       setPendingAction('create')
       setError('')
-      const response = await createSession(userNameInput, hostMaxParticipants)
+      const response = await createSession(userNameInput, hostMaxParticipants, {
+        title: hostRoomTitle.trim() || null,
+        maxPicksPerParticipant: hostMaxPicksPerParticipant,
+        searchBias: hostSearchBias,
+      })
       setSession(response.session)
       setParticipantId(response.participantId)
       persistSession({
@@ -452,6 +529,10 @@ export default function App() {
     setOptionInput('')
     setSuggestions([])
     setShowSuggestions(false)
+    setHostAreaInput('')
+    setHostAreaSuggestions([])
+    setHostAreaShowSuggestions(false)
+    setHostSearchBias(null)
     setRatings({})
     setResults([])
     setError('')
@@ -475,12 +556,31 @@ export default function App() {
     return (
       <LandingPage
         busy={busy}
+        hostAreaInput={hostAreaInput}
+        hostAreaRef={hostAreaRef}
+        hostAreaShowSuggestions={hostAreaShowSuggestions}
+        hostAreaSuggestions={hostAreaSuggestions}
         hostMaxParticipants={hostMaxParticipants}
+        hostMaxPicksPerParticipant={hostMaxPicksPerParticipant}
+        hostRoomTitle={hostRoomTitle}
+        hostSearchBias={hostSearchBias}
         joinCodeInput={joinCodeInput}
+        onClearHostSearchBias={() => {
+          setHostSearchBias(null)
+          setHostAreaInput('')
+          setHostAreaSuggestions([])
+          setHostAreaShowSuggestions(false)
+        }}
+        onInvalidateHostSearchBias={() => setHostSearchBias(null)}
         onCreate={handleCreateSession}
+        onHostAreaSuggestionPick={handleHostAreaSuggestionPick}
         onJoinSubmit={handleJoinSession}
         pendingAction={pendingAction}
+        setHostAreaInput={setHostAreaInput}
+        setHostAreaShowSuggestions={setHostAreaShowSuggestions}
         setHostMaxParticipants={setHostMaxParticipants}
+        setHostMaxPicksPerParticipant={setHostMaxPicksPerParticipant}
+        setHostRoomTitle={setHostRoomTitle}
         setJoinCodeInput={setJoinCodeInput}
         setUserNameInput={setUserNameInput}
         userNameInput={userNameInput}
@@ -504,6 +604,8 @@ export default function App() {
       error={error || null}
       joinCode={session.joinCode}
       maxParticipants={session.maxParticipants}
+      roomTitle={session.title ?? null}
+      searchAreaHint={session.searchBias?.label ?? null}
       onCopyCode={handleCopyJoinCode}
       onLeave={handleLeaveSession}
       onRefresh={() => refreshSession(session.sessionId)}
@@ -548,7 +650,6 @@ export default function App() {
       {session.status === 'results' && (
         <ResultsPhase
           busy={busy}
-          onLeave={handleLeaveSession}
           onRefreshResults={() => loadResults(session.sessionId)}
           participantId={participantId}
           pendingAction={pendingAction}

@@ -1,7 +1,7 @@
 import type { SessionResponse } from '../api'
 import { participantFinishedRating, ratingsMatchServer } from '../sessionHelpers'
 import { PlaceOptionMeta } from '../PlaceOptionMeta'
-import { foodImageForIndex, foodImageForOption } from './foodImages'
+import { foodImageForOption } from './foodImages'
 
 type PendingAction = 'submit-ratings' | null
 
@@ -37,7 +37,7 @@ export function RatePhase({
 }: RatePhaseProps) {
   const ratedCount = session.options.reduce((count, option) => {
     const score = ratings[option.id]
-    return Number.isInteger(score) && score >= 1 && score <= 10 ? count + 1 : count
+    return Number.isInteger(score) && score >= 0 && score <= 10 ? count + 1 : count
   }, 0)
 
   const savedOnServer = participantFinishedRating(session, participantId)
@@ -65,6 +65,7 @@ export function RatePhase({
       ) : (
         <div className="grid gap-8">
           {session.options.map((option, index) => {
+            const imageUrl = foodImageForOption(option)
             const current = ratings[option.id] ?? 5
             const suggestedBy =
               option.addedBy === participantId
@@ -73,22 +74,24 @@ export function RatePhase({
 
             return (
               <section
-                className={`bg-surface-container-lowest rounded-xl p-6 shadow-[0_12px_32px_rgba(41,48,52,0.06)] flex flex-col md:flex-row gap-6 items-center relative overflow-hidden ${
+                className={`bg-surface-container-lowest rounded-xl p-6 shadow-card flex flex-col md:flex-row gap-6 items-center relative overflow-hidden ${
                   index > 0 ? 'border-t-4 border-secondary-container' : ''
                 }`}
                 key={option.id}
               >
                 {index === 0 ? <div className="absolute top-0 left-0 w-1 h-full bg-primary" /> : null}
                 <div className="w-full md:w-48 h-32 rounded-lg overflow-hidden shrink-0 bg-surface-container">
-                  <img
-                    alt=""
-                    className="w-full h-full object-cover"
-                    src={foodImageForOption(option, index)}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null
-                      e.currentTarget.src = foodImageForIndex(index)
-                    }}
-                  />
+                  {imageUrl ? (
+                    <img
+                      alt=""
+                      className="w-full h-full object-cover"
+                      src={imageUrl}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null
+                        e.currentTarget.style.display = 'none'
+                      }}
+                    />
+                  ) : null}
                 </div>
                 <div className="flex-1 w-full min-w-0">
                   <div className="flex justify-between items-start mb-2 gap-3">
@@ -114,7 +117,7 @@ export function RatePhase({
                     <input
                       className="w-full h-2 bg-surface-container rounded-lg appearance-none cursor-pointer accent-primary"
                       max={10}
-                      min={1}
+                      min={0}
                       onChange={(e) => setRating(option.id, Number(e.target.value))}
                       type="range"
                       value={current}

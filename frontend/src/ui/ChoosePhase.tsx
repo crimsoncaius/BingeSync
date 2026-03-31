@@ -68,6 +68,12 @@ export function ChoosePhase({
   const participantCount = session.participants.length
   const selectionDone = session.selectionDone ?? {}
   const canShowDoneFlow = (session.status === 'collecting' || (session.status === 'waiting' && participantCount > 1))
+  const pickLimit = session.maxPicksPerParticipant ?? null
+  const myPickCount = useMemo(
+    () => session.options.filter((o) => o.addedBy === participantId).length,
+    [session.options, participantId],
+  )
+  const atPickLimit = pickLimit !== null && myPickCount >= pickLimit
 
   function renderOptionRow(option: FoodOption) {
     const isMine = option.addedBy === participantId
@@ -106,6 +112,9 @@ export function ChoosePhase({
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 font-headline">
             What are you craving?
           </h1>
+          {session.title ? (
+            <p className="text-primary font-headline font-semibold text-lg mb-2">{session.title}</p>
+          ) : null}
           <p className="text-secondary max-w-lg">
             Add your favorite spots to the pool. We&apos;ll vote on them in the next phase.
           </p>
@@ -178,7 +187,7 @@ export function ChoosePhase({
                                 ? 'cursor-not-allowed bg-surface-container/60 opacity-80'
                                 : 'hover:bg-surface-container cursor-pointer disabled:opacity-50'
                             }`}
-                            disabled={busy || alreadyInPool}
+                            disabled={busy || alreadyInPool || atPickLimit}
                             key={s.placeId ? s.placeId : `q-${s.name}-${index}`}
                             onMouseDown={(e) => {
                               e.preventDefault()
@@ -236,12 +245,17 @@ export function ChoosePhase({
                 </div>
                 <button
                   className="bg-gradient-to-br from-primary to-primary-container text-white px-6 py-3 rounded-lg font-bold hover:scale-105 transition-transform disabled:opacity-50 shrink-0"
-                  disabled={busy || optionInput.trim().length < 2}
+                  disabled={busy || optionInput.trim().length < 2 || atPickLimit}
                   type="submit"
                 >
                   {renderActionLabel(pendingAction, 'add-option', 'Add', 'Adding…')}
                 </button>
               </div>
+              {atPickLimit ? (
+                <p className="text-xs text-secondary mt-2">
+                  You&apos;ve reached the maximum picks for this room ({pickLimit} per person).
+                </p>
+              ) : null}
             </form>
           </div>
 
@@ -253,7 +267,9 @@ export function ChoosePhase({
                   My Private List
                 </h3>
                 <span className="bg-secondary-container text-on-secondary-container text-[10px] font-bold px-2 py-1 rounded">
-                  {session.options.length} {session.options.length === 1 ? 'ITEM' : 'ITEMS'}
+                  {pickLimit != null
+                    ? `${myPickCount} / ${pickLimit} ${myPickCount === 1 ? 'PICK' : 'PICKS'}`
+                    : `${session.options.length} ${session.options.length === 1 ? 'ITEM' : 'ITEMS'}`}
                 </span>
               </div>
               <div className="space-y-3" ref={optionListRef}>
@@ -304,7 +320,7 @@ export function ChoosePhase({
 
       <div className="md:hidden fixed bottom-24 right-6 z-40">
         <button
-          className="w-14 h-14 bg-secondary text-white rounded-full shadow-xl flex items-center justify-center relative"
+          className="w-14 h-14 bg-secondary text-on-secondary rounded-full shadow-xl flex items-center justify-center relative"
           type="button"
         >
           <span className="material-symbols-outlined">group</span>

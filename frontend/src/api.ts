@@ -28,6 +28,14 @@ export interface RankedResult {
   averageScore: number
   disagreementPenalty: number
   finalScore: number
+  /** 1-based competition rank; same finalScore shares rank. */
+  rank: number
+}
+
+export interface SessionSearchBias {
+  latitude: number
+  longitude: number
+  label?: string | null
 }
 
 export interface SessionResponse {
@@ -42,6 +50,12 @@ export interface SessionResponse {
   isReadyForResults: boolean
   /** Normalized Google Place IDs already in this session (any participant). */
   usedGooglePlaceIds?: string[]
+  /** Optional label for the room (e.g. occasion). */
+  title?: string | null
+  /** Max options each participant may add; omitted or null means no limit. */
+  maxPicksPerParticipant?: number | null
+  /** When set, restaurant autocomplete is biased toward this area for everyone in the room. */
+  searchBias?: SessionSearchBias | null
 }
 
 export interface SessionCreateResponse {
@@ -83,13 +97,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export function createSession(name: string, maxParticipants: number = 2) {
+export interface CreateSessionExtras {
+  title?: string | null
+  maxPicksPerParticipant?: number | null
+  /** Optional map bias for restaurant search in this room. */
+  searchBias?: SessionSearchBias | null
+}
+
+export function createSession(
+  name: string,
+  maxParticipants: number = 2,
+  extras?: CreateSessionExtras,
+) {
+  const bias = extras?.searchBias
+  const body: Record<string, unknown> = {
+    name: name.trim() || null,
+    maxParticipants,
+    title: extras?.title?.trim() ? extras.title.trim() : null,
+    maxPicksPerParticipant: extras?.maxPicksPerParticipant ?? null,
+  }
+  if (bias) {
+    body.searchBiasLatitude = bias.latitude
+    body.searchBiasLongitude = bias.longitude
+    body.searchBiasLabel = bias.label?.trim() ? bias.label.trim() : null
+  }
   return request<SessionCreateResponse>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({
-      name: name.trim() || null,
-      maxParticipants,
-    }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -182,14 +216,55 @@ export function isAbortError(e: unknown): boolean {
   )
 }
 
-export async function fetchSuggestions(query: string, init?: RequestInit): Promise<PlaceSuggestion[]> {
+export async function fetchSuggestions(
+  query: string,
+  options?: { sessionId?: string; signal?: AbortSignal },
+): Promise<PlaceSuggestion[]> {
+  const params = new URLSearchParams({ q: query })
+  if (options?.sessionId) {
+    params.set('sessionId', options.sessionId)
+  }
   try {
-    const res = await fetch(`${API_BASE}/suggestions?q=${encodeURIComponent(query)}`, init)
+    const res = await fetch(`${API_BASE}/suggestions?${params}`, { signal: options?.signal })
     if (!res.ok) return []
     return (await res.json()) as PlaceSuggestion[]
   } catch (e) {
     if (isAbortError(e)) throw e
     return []
+  }
+}
+
+export async function fetchAreaSuggestions(query: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
+  try {
+    const res = await fetch(`${API_BASE}/suggestions/area?q=${encodeURIComponent(query)}`, { signal })
+    if (!res.ok) return []
+    return (await res.json()) as PlaceSuggestion[]
+  } catch (e) {
+    if (isAbortError(e)) throw e
+    return []
+  }
+}
+
+export interface PlaceBiasLocation {
+  latitude: number
+  longitude: number
+  label?: string | null
+}
+
+export async function fetchPlaceBiasLocation(
+  placeId: string,
+  signal?: AbortSignal,
+): Promise<PlaceBiasLocation | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/places/location?placeId=${encodeURIComponent(placeId)}`,
+      { signal },
+    )
+    if (!res.ok) return null
+    return (await res.json()) as PlaceBiasLocation
+  } catch (e) {
+    if (isAbortError(e)) throw e
+    return null
   }
 }
 

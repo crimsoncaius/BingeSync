@@ -33,3 +33,17 @@ npx vite --host 127.0.0.1 --port 5173
 ```
 
 **Frontend:** http://127.0.0.1:5173
+
+## Places Autocomplete playground (optional)
+
+Separate Vite app to try **Places API (New)** autocomplete parameters. Uses **`GOOGLE_PLACES_API_KEY`** from the repo root **`.env`** (same as the backend). Dev server only — run from its folder:
+
+```powershell
+cd C:\Users\Caius\Desktop\BingeSync\places-autocomplete-playground
+
+npm install
+
+npm run dev
+```
+
+**Playground:** http://127.0.0.1:5180

@@ -1,260 +1,175 @@
 # Software Architecture Document (SAD)
 
 ## Project
-`BingeSync` is a fast utility web app that helps two people decide what food to eat by creating a shared session, adding food options, rating the combined pool, and returning a ranked result.
 
-This document defines the recommended MVP architecture based on the current product plan and stack choices.
+`BingeSync` is a utility web app that helps a small group decide where to eat. People create or join a room with a short code, add restaurant picks (with optional Google Places autocomplete), finish their private list, rate the combined pool together, and see a ranked result.
+
+This document describes the **current** implementation and how it is intended to evolve.
 
 ## Architecture Goals
-- Keep the MVP simple and fast to build.
-- Optimize for low friction and quick decision-making.
-- Avoid unnecessary infrastructure in version 1.
-- Leave clear upgrade paths for realtime updates, persistence, and group support later.
 
-## Recommended Stack
+- Keep the product simple to run and reason about.
+- Optimize for low friction and quick decisions.
+- Avoid a database until persistence is a real requirement.
+- Leave clear upgrade paths for durable storage, richer realtime, and larger groups.
+
+## Stack
 
 ### Frontend
-- `React`
+
+- `React` + `TypeScript`
 - `Vite`
 - `Tailwind CSS`
 
+Client calls the backend with `fetch`; live session updates use the browser `EventSource` API (Server-Sent Events). Session identity (`sessionId`, `participantId`) is stored in `sessionStorage` so a refresh can rejoin the same room.
+
 ### Backend
-- `FastAPI` with `Python`
 
-### Hosting
-- Frontend on `Vercel`
-- Backend on `Railway`
+- `FastAPI` + `Python`
+- In-memory session store (`dict`s) guarded by a `threading.Lock`
+- `httpx` for outbound calls to Google Places (New API)
 
-### External Services
-- `Google Places API` for location or food/place enrichment
+All HTTP JSON routes are mounted under the `/api` prefix (see **API surface**).
+
+### Hosting (typical)
+
+- Frontend on `Vercel` (or any static host; `VITE_API_BASE_URL` points at the API).
+- Backend on `Railway` (or similar).
+
+### External services
+
+- **Google Places API (New)** — autocomplete suggestions, place details when adding a pick, lazy rating enrichment for suggestion rows, and proxied place photos so the browser never sees the API key.
 
 ### Testing
-- Unit tests
-- End-to-end tests
 
-### Deferred for Later
-- LLM usage
-- State management library
+- Backend: `pytest` under `backend/tests/` (e.g. ranking math, session settings).
+- End-to-end tests are not wired in-repo yet; the core loop is covered manually and via API tests.
+
+### Deferred
+
+- LLM-assisted normalization
+- Dedicated client state library (app uses React state)
 - Voice input
 - Authentication
 - Analytics
-- Realtime infrastructure
-- Database and ORM
+- Database / ORM
 
-## Why This Stack
+## High-level system design
 
-### React + Vite
-`React + Vite` is a strong fit for the MVP because it provides a fast local development experience, a simple project structure, and low overhead. It is ideal for building a focused web app without introducing unnecessary framework complexity early.
+### Client responsibilities
 
-### Tailwind CSS
-`Tailwind CSS` is the recommended styling choice because it allows rapid UI iteration, keeps the component workflow fast, and works well for a utility-first product where speed matters more than heavy design-system investment.
+- Landing: create room (optional title, max participants, max picks per person) or join by code.
+- **Choose** phase (`waiting` / `collecting`): add/remove own options; autocomplete from Places; mark “done choosing” when the private list is ready.
+- **Rate** phase: sliders `0–10` for every option in the combined pool; submit one batch per participant when complete.
+- **Results**: show ranked list once everyone has rated everything.
+- Subscribe to `GET /api/sessions/{id}/events` for push updates; still uses `GET` for bootstrap and mutations.
 
-### FastAPI
-`FastAPI` is the recommended backend because it is lightweight, fast, and well suited to a small API that manages sessions, join codes, option submission, ratings, and ranking results. It also provides strong request modeling and validation patterns and can be deployed cleanly on `Railway`.
+### Server responsibilities
 
-## Database Recommendation
-For the current MVP, **no database is required** if the goal is to validate the product flow quickly.
+- Issue `sessionId`, `joinCode`, and `participantId` on create/join.
+- Enforce room capacity (`maxParticipants`, default 2, cap 10), join rules (closed during `rating` / `results`), and optional `maxPicksPerParticipant`.
+- Store options, per-participant “selection done”, and ratings; derive `status` from that data.
+- Merge picks into one pool for rating; **while more than one person is in the room during choose**, each client only sees their own options in API responses until the room moves to rating (privacy for parallel picking).
+- Deduplicate by **Google Place ID** across the pool; allow duplicate display names per person via internal normalized-name disambiguation.
+- Run ranking when all participants have rated all options.
+- Broadcast session snapshots to SSE subscribers after mutations.
 
-### MVP Approach
-Use an in-memory store on the backend for:
-- sessions
-- join codes
-- food options
-- user ratings
-- ranked results
+## Session lifecycle and status
 
-### Tradeoff
-This is the fastest way to build, but it has clear limitations:
-- data is lost when the server restarts
-- sessions do not persist long term
-- horizontal scaling is not safe
-- multiple backend instances can cause inconsistency
+Derived `status` values:
 
-### Best Long-Term Database
-If persistence becomes necessary, the best next step is `PostgreSQL`.
+| Status        | Meaning |
+|---------------|---------|
+| `waiting`     | Room not full; still accepting joins. |
+| `collecting`  | Room full (or host chose >2 max); still in choose phase. |
+| `rating`      | At least two participants, at least one option, everyone marked selection done — combined pool visible; ratings accepted. |
+| `results`     | Every participant has rated every option. |
 
-`PostgreSQL` is the best long-term recommendation because it is reliable, flexible, easy to host on `Railway`, and a strong fit for:
-- sessions
-- users
-- ratings
-- historical results
-- future group support
+Minimum participants to leave `waiting` is 2. Moving to `rating` requires everyone currently in the room to have marked selection done (and each must have at least one option before marking done).
 
-For now, the architecture should be written so a database can be added later without major rewrites.
+## API surface
 
-## High-Level System Design
+Base path: `/api`.
 
-### Client Responsibilities
-The frontend is responsible for:
-- creating or joining a session
-- collecting food entries
-- showing the combined pool
-- collecting ratings from each user
-- displaying ranked results
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Liveness. |
+| `POST` | `/sessions` | Create session; body may include `name`, `maxParticipants`, `title`, `maxPicksPerParticipant`. |
+| `POST` | `/sessions/join` | Join by `joinCode` (+ optional `name`). |
+| `GET` | `/sessions/{sessionRef}` | Session snapshot; `sessionRef` may be `sessionId` or `joinCode`. Query `participantId` for viewer-scoped option list in choose phase. |
+| `GET` | `/sessions/{sessionId}/events` | SSE stream of session JSON; query `participantId` same as above. |
+| `POST` | `/sessions/{sessionId}/options` | Add option (`participantId`, `name`, optional `placeId`); may fetch Places details. |
+| `DELETE` | `/sessions/{sessionId}/options/{optionId}` | Remove own option (`participantId` query). |
+| `POST` | `/sessions/{sessionId}/selection/done` | Toggle selection finished (`participantId`, `done`). |
+| `POST` | `/sessions/{sessionId}/ratings` | Replace one participant’s ratings for all options (full grid required). |
+| `GET` | `/sessions/{sessionId}/results` | Ranked results when ready; otherwise `ready: false` + reason. |
+| `GET` | `/suggestions` | Places autocomplete (`q`); requires configured API key. |
+| `POST` | `/suggestions/enrich` | Batch lazy-load ratings for suggestion `placeId`s. |
+| `GET` | `/places/photo` | Proxy Places photo media (`name` = photo resource); key stays server-side. |
 
-### Server Responsibilities
-The backend is responsible for:
-- creating sessions
-- generating join codes
-- accepting food option submissions
-- merging or normalizing duplicate entries
-- storing ratings during the active session
-- running the ranking algorithm
-- returning the final ranked list
-- optionally enriching entries with `Google Places API`
+## Session and option models (API shape)
 
-## Core MVP Flow
-1. User A creates a session.
-2. The backend generates a short join code.
-3. User B joins the session with the code.
-4. Both users submit food options.
-5. The backend builds one combined pool.
-6. Each user rates each option from `1-10`.
-7. The backend computes a ranked list.
-8. The frontend shows the top result and backup choices.
+Session responses include roughly:
 
-## API Design Direction
-The API should stay small and task-oriented.
+- `sessionId`, `joinCode`, `status`
+- `participants[]` — `id`, `label`
+- `options[]` — `id`, `name`, `addedBy`, optional Places fields (`address`, `googlePlaceId`, `rating`, `userRatingCount`, `priceLevel`, `phone`, `websiteUri`, `googleMapsUri`, `openNow`, `photoUrl`)
+- `ratings` — map `participantId` → `optionId` → integer score
+- `selectionDone` — map `participantId` → boolean
+- `maxParticipants`, `isReadyForResults`, `usedGooglePlaceIds`, optional `title`, `maxPicksPerParticipant`
 
-Suggested endpoints:
-- `POST /sessions`
-- `POST /sessions/join`
-- `POST /sessions/:sessionId/options`
-- `GET /sessions/:sessionId/options`
-- `POST /sessions/:sessionId/ratings`
-- `GET /sessions/:sessionId/results`
+There is no separate `expiresAt` field in the current store; sessions live until process restart.
 
-These routes are enough for the MVP and leave room for future expansion.
+## Realtime strategy
 
-## Session Model
-The MVP only supports two users per session.
+The app uses **Server-Sent Events** (not WebSockets): the server pushes serialized `SessionResponse` JSON on change, with periodic keepalive comments. The client still uses HTTP for actions; SSE keeps multiple tabs and participants in sync without polling.
 
-Recommended session object shape:
-- `sessionId`
-- `joinCode`
-- `status`
-- `participants`
-- `options`
-- `ratings`
-- `results`
-- `createdAt`
-- `expiresAt`
+## Auth strategy
 
-Even though the MVP supports only two users, the internal model should avoid hardcoding assumptions that make future group support difficult.
+Anonymous participation: knowing `joinCode` (and receiving a `participantId` from create/join) is the access model. No accounts.
 
-## Realtime Strategy
-Realtime updates are **not required** for the MVP.
+## Google Places usage
 
-Recommended approach:
-- use standard HTTP requests
-- refresh data after key actions
-- optionally use lightweight polling only if needed
+- **Autocomplete** (`places:autocomplete`) filters to food-related primary types; the backend uses a fixed **location bias** (Singapore-centered circle) in the current code — adjust for other regions if needed.
+- **Place details** when adding an option with `placeId` populate name, address, ratings, hours, links, and first photo reference.
+- **Photo proxy** serves images via `/api/places/photo` using the server key.
+- If `GOOGLE_PLACES_API_KEY` is unset, suggestions return empty and details enrichment is skipped; free-text names still work.
 
-This keeps the architecture simple and avoids early `WebSocket` complexity.
+## Ranking
 
-## Auth Strategy
-Authentication is **not required** for the MVP.
+Implemented scoring per option:
 
-Recommended approach:
-- anonymous session participation
-- simple join-code access
-- no account creation
+- `averageScore` — mean of all participants’ scores.
+- `disagreementPenalty` — `(max - min) * 0.4`.
+- `finalScore` — `averageScore - disagreementPenalty`.
 
-This keeps the entry barrier low and supports the fast-utility product goal.
+Results are sorted by `finalScore` (then tie-breakers), with competition-style **ranks** (ties share rank).
 
-## Google Places API Usage
-`Google Places API` should be used as an optional enrichment layer rather than a hard dependency for all entries.
+Scores are integers **0–10** inclusive.
 
-Possible uses:
-- normalize restaurant names
-- enrich place details
-- improve duplicate matching
-- support future location-aware suggestions
+## State on the client
 
-For the MVP, manual user input should still work even if API enrichment fails.
+- React component state drives UI; no global store library.
+- `flowPhaseFromStatus` maps API `status` to UI steps: `choose` | `rating` | `results`.
 
-## Ranking Strategy
-The ranking algorithm should reward mutual interest and penalize disagreement.
+## Database
 
-A practical MVP scoring approach:
-- start with the average of both ratings
-- subtract a disagreement penalty based on the rating gap
+**None** in the current build — same tradeoffs as before: data lost on restart, single-instance memory only safe for one backend process.
 
-Example concept:
-- two `7` ratings should rank well
-- a `10` and a `4` should rank lower than a steady mutual option
+**PostgreSQL** remains the natural next step for persistence, history, and horizontal scale.
 
-This fits the product goal better than simple average alone.
+## Deployment note
 
-## LLM Position
-LLM usage is currently deferred.
+In-memory sessions plus SSE mean: restarts drop rooms; multiple instances without sticky sessions or shared state will not see the same rooms. Acceptable for demos; not for production scale without storage and routing changes.
 
-If introduced later, it should likely be used for:
-- fuzzy normalization of food entries
-- resolving ambiguous user input
-- improving matching between similar options
+## Future evolution
 
-It should not be required for the core MVP flow.
+- Persistent storage and optional auth
+- WebSockets or ably/pub-sub if bidirectional or richer sync is needed
+- Configurable or user-chosen location for Places bias
+- E2E tests for the full loop
+- LLM or fuzzy matching on free-text-only entries
 
-## State Management Recommendation
-This decision can wait.
+## Summary
 
-Recommended MVP approach:
-- use standard React state and component state first
-- introduce a state library only if session flow becomes hard to manage
-
-If a state library is needed later, `Zustand` would be a strong lightweight option.
-
-## Testing Strategy
-
-### Unit Tests
-Use unit tests for:
-- ranking logic
-- duplicate merging logic
-- session validation
-- join-code generation
-
-### End-to-End Tests
-Use end-to-end tests for:
-- creating a session
-- joining with a code
-- adding food options
-- rating the combined pool
-- viewing ranked results
-
-This gives confidence in the core product loop without over-investing in infrastructure.
-
-## Deployment Model
-
-### Frontend
-Deploy the `React + Vite` frontend to `Vercel`.
-
-### Backend
-Deploy the `FastAPI` service to `Railway`.
-
-### Important Constraint
-If the backend uses only in-memory storage, deployed sessions may be unstable across restarts or multiple instances.
-
-That is acceptable for an early prototype, but not for a durable production MVP.
-
-## Future Evolution
-Planned upgrades after MVP may include:
-- persistent database storage with `PostgreSQL`
-- realtime updates with `WebSockets`
-- group sessions
-- voice input
-- LLM-assisted matching
-- restaurant availability and richer place metadata
-- authentication and saved session history
-
-## Final Recommendation
-The best MVP architecture is:
-- `React + Vite` frontend
-- `Tailwind CSS` for styling
-- `FastAPI` backend on `Railway`
-- no database for the first prototype
-- `Google Places API` as optional enrichment
-- anonymous join-code sessions
-- no realtime, no auth, no voice input in version 1
-
-This is the fastest path to a usable prototype while keeping the system easy to upgrade later.
+The shipped architecture is: **React + Vite + Tailwind** frontend, **FastAPI** backend with an **in-memory** session store, **Google Places (New)** for suggestions and enrichment, **anonymous join-code** rooms for **2–10** people, **SSE** for live session sync, and **HTTP** for mutations and results — designed so a database and stronger hosting story can be added without rewriting the product flow.

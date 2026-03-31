@@ -11,7 +11,7 @@ export function participantFinishedRating(session: SessionResponse, pid: string)
 
   return session.options.every((option) => {
     const score = row[option.id]
-    return Number.isInteger(score) && score >= 1 && score <= 10
+    return Number.isInteger(score) && score >= 0 && score <= 10
   })
 }
 
@@ -27,7 +27,7 @@ export function ratingsMatchServer(
     const local = ratings[option.id]
     return (
       Number.isInteger(saved) &&
-      saved >= 1 &&
+      saved >= 0 &&
       saved <= 10 &&
       local === saved
     )
