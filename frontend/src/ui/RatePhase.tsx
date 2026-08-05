@@ -52,7 +52,7 @@ export function RatePhase({
           Rate Your Cravings
         </h1>
         <p className="text-lg text-secondary max-w-xl">
-          The group has spoken. Now, score each option from 1 to 10 based on how much you want it right
+          The group has spoken. Now, score each option from 0 to 10 based on how much you want it right
           now.
         </p>
         <p className="mt-3 text-sm text-on-surface-variant">
