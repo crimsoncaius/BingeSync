@@ -69,7 +69,14 @@ export interface ResultsResponse {
   reason?: string
 }
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const LEGACY_API_BASE = 'https://backend-production-da0f2.up.railway.app/api'
+const CURRENT_API_BASE = 'https://backend-production-04ef.up.railway.app/api'
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL
+
+export const API_BASE =
+  configuredApiBase === LEGACY_API_BASE
+    ? CURRENT_API_BASE
+    : (configuredApiBase ?? (import.meta.env.PROD ? CURRENT_API_BASE : '/api'))
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
