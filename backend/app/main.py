@@ -43,8 +43,9 @@ GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 SessionStatus = Literal["waiting", "collecting", "rating", "results"]
 MIN_PARTICIPANTS = 2
 MAX_PICKS_PER_PARTICIPANT_CAP = 25
+# Rooms have no host-chosen capacity; this is the hard ceiling the server enforces
+# so the rate phase (everyone scores every pick) stays manageable.
 MAX_PARTICIPANTS_CAP = 10
-DEFAULT_MAX_PARTICIPANTS = MIN_PARTICIPANTS
 JOIN_CODE_LENGTH = 6
 SCORE_PENALTY_MULTIPLIER = 0.4
 
@@ -84,7 +85,6 @@ class SessionResponse(BaseModel):
     options: list[FoodOptionResponse]
     ratings: dict[str, dict[str, int]]
     selectionDone: dict[str, bool]
-    maxParticipants: int
     isReadyForResults: bool
     usedGooglePlaceIds: list[str]
     title: str | None = None
@@ -99,11 +99,6 @@ class SessionCreateResponse(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     name: str | None = Field(default=None, max_length=40)
-    maxParticipants: int = Field(
-        default=DEFAULT_MAX_PARTICIPANTS,
-        ge=MIN_PARTICIPANTS,
-        le=MAX_PARTICIPANTS_CAP,
-    )
     title: str | None = Field(default=None, max_length=80)
     maxPicksPerParticipant: int | None = Field(
         default=None,
@@ -201,7 +196,6 @@ class SessionRecord:
     options: list[FoodOption]
     ratings: dict[str, dict[str, int]]
     selection_done: dict[str, bool]
-    max_participants: int = DEFAULT_MAX_PARTICIPANTS
     title: str | None = None
     max_picks_per_participant: int | None = None
     search_bias_latitude: float | None = None
@@ -407,11 +401,16 @@ def ready_for_rating_phase(session: SessionRecord) -> bool:
 
 
 def session_status(session: SessionRecord) -> SessionStatus:
+    """
+    Rooms have no capacity, so the choose phase splits on headcount instead of
+    fullness: `waiting` is a room that cannot start yet (still short of
+    MIN_PARTICIPANTS), `collecting` is one with enough people to finish picking.
+    """
     if has_full_ratings(session):
         return "results"
     if ready_for_rating_phase(session):
         return "rating"
-    if len(session.participants) < session.max_participants:
+    if len(session.participants) < MIN_PARTICIPANTS:
         return "waiting"
     return "collecting"
 
@@ -480,7 +479,6 @@ def serialize_session(session: SessionRecord, viewer_participant_id: str | None 
         options=options,
         ratings=session.ratings,
         selectionDone=selection_done,
-        maxParticipants=session.max_participants,
         isReadyForResults=has_full_ratings(session),
         usedGooglePlaceIds=collect_used_google_place_ids(session),
         title=session.title,
@@ -585,7 +583,6 @@ def create_session(
             options=[],
             ratings={participant_id: {}},
             selection_done={participant_id: False},
-            max_participants=payload.maxParticipants,
             title=clean_title(payload.title),
             max_picks_per_participant=payload.maxPicksPerParticipant,
             search_bias_latitude=sb_lat,
@@ -625,8 +622,11 @@ def join_session(payload: JoinSessionRequest) -> SessionCreateResponse:
                 detail="This session has finished—joining is closed.",
             )
 
-        if len(session.participants) >= session.max_participants:
-            raise HTTPException(status_code=400, detail="Session is full")
+        if len(session.participants) >= MAX_PARTICIPANTS_CAP:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This room already has the maximum of {MAX_PARTICIPANTS_CAP} people.",
+            )
 
         participant_id = create_identifier()
         participant_label = clean_display_name(

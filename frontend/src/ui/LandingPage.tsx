@@ -22,9 +22,6 @@ type PendingAction =
   | "load-results"
   | null;
 
-const HOST_MIN = 2;
-const HOST_MAX = 10;
-
 function renderActionLabel(
   pendingAction: PendingAction,
   expectedAction: Exclude<PendingAction, "restore" | null>,
@@ -39,8 +36,6 @@ export interface LandingPageProps {
   setUserNameInput: (v: string) => void;
   joinCodeInput: string;
   setJoinCodeInput: (v: string) => void;
-  hostMaxParticipants: number;
-  setHostMaxParticipants: (n: number) => void;
   hostRoomTitle: string;
   setHostRoomTitle: (v: string) => void;
   hostMaxPicksPerParticipant: number | null;
@@ -66,8 +61,6 @@ export function LandingPage({
   setUserNameInput,
   joinCodeInput,
   setJoinCodeInput,
-  hostMaxParticipants,
-  setHostMaxParticipants,
   hostRoomTitle,
   setHostRoomTitle,
   hostMaxPicksPerParticipant,
@@ -89,12 +82,6 @@ export function LandingPage({
 }: LandingPageProps) {
   const year = new Date().getFullYear();
   const joinCodeRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  function bumpHost(delta: number) {
-    setHostMaxParticipants(
-      Math.min(HOST_MAX, Math.max(HOST_MIN, hostMaxParticipants + delta)),
-    );
-  }
 
   function joinCharAt(index: number): string {
     return joinCodeInput[index] ?? "";
@@ -426,37 +413,6 @@ export function LandingPage({
                     >
                       No limit
                     </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-bold text-secondary uppercase tracking-widest">
-                      Group Capacity
-                    </span>
-                    <div className="flex items-center justify-between bg-surface-container-low p-3 rounded-lg">
-                      <button
-                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container-highest transition-colors disabled:opacity-50"
-                        disabled={busy || hostMaxParticipants <= HOST_MIN}
-                        onClick={() => bumpHost(-1)}
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-secondary">
-                          remove
-                        </span>
-                      </button>
-                      <span className="text-lg font-bold">
-                        {hostMaxParticipants}{" "}
-                        {hostMaxParticipants === 1 ? "Person" : "People"}
-                      </span>
-                      <button
-                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container-highest transition-colors disabled:opacity-50"
-                        disabled={busy || hostMaxParticipants >= HOST_MAX}
-                        onClick={() => bumpHost(1)}
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-secondary">
-                          add
-                        </span>
-                      </button>
-                    </div>
                   </div>
                   <button
                     className="w-full btn-gradient text-white font-bold py-4 rounded-lg shadow-lg hover:brightness-110 transition-all flex items-center justify-center gap-2 group disabled:opacity-60"

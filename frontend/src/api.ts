@@ -46,7 +46,6 @@ export interface SessionResponse {
   options: FoodOption[]
   ratings: Record<string, Record<string, number>>
   selectionDone: Record<string, boolean>
-  maxParticipants: number
   isReadyForResults: boolean
   /** Normalized Google Place IDs already in this session (any participant). */
   usedGooglePlaceIds?: string[]
@@ -111,15 +110,10 @@ export interface CreateSessionExtras {
   searchBias?: SessionSearchBias | null
 }
 
-export function createSession(
-  name: string,
-  maxParticipants: number = 2,
-  extras?: CreateSessionExtras,
-) {
+export function createSession(name: string, extras?: CreateSessionExtras) {
   const bias = extras?.searchBias
   const body: Record<string, unknown> = {
     name: name.trim() || null,
-    maxParticipants,
     title: extras?.title?.trim() ? extras.title.trim() : null,
     maxPicksPerParticipant: extras?.maxPicksPerParticipant ?? null,
   }

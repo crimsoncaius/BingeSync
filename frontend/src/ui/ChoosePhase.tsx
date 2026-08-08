@@ -70,9 +70,9 @@ export function ChoosePhase({
 
   const participantCount = session.participants.length;
   const selectionDone = session.selectionDone ?? {};
-  const canShowDoneFlow =
-    session.status === "collecting" ||
-    (session.status === "waiting" && participantCount > 1);
+  // `collecting` means enough people have joined to finish and move to rating;
+  // `waiting` is a room that is still on its own.
+  const canShowDoneFlow = session.status === "collecting";
   const pickLimit = session.maxPicksPerParticipant ?? null;
   const myPickCount = useMemo(
     () => session.options.filter((o) => o.addedBy === participantId).length,
@@ -132,38 +132,35 @@ export function ChoosePhase({
           </p>
         </header>
 
-        {session.status === "waiting" ? (
-          <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {session.participants.map((entry) => (
-              <div
-                className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest px-4 py-3"
-                key={entry.id}
-              >
-                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-dim">
-                  Joined
-                </p>
-                <p className="font-headline font-bold text-on-surface">
-                  {entry.id === participantId ? "You" : entry.label}
-                </p>
-              </div>
-            ))}
-            {session.participants.length < session.maxParticipants ? (
-              <div className="rounded-xl border border-dashed border-primary-container/40 bg-primary-container/5 px-4 py-3 flex flex-col justify-center">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                  Open spot
-                </p>
-                <p className="font-headline font-bold text-on-surface">
-                  {session.maxParticipants - session.participants.length === 1
-                    ? "1 spot left"
-                    : `${session.maxParticipants - session.participants.length} spots left`}
-                </p>
-                <p className="text-xs text-on-surface-variant mt-1">
-                  Share code {session.joinCode}
-                </p>
-              </div>
-            ) : null}
+        <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {session.participants.map((entry) => (
+            <div
+              className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest px-4 py-3"
+              key={entry.id}
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-dim">
+                Joined
+              </p>
+              <p className="font-headline font-bold text-on-surface">
+                {entry.id === participantId ? "You" : entry.label}
+              </p>
+            </div>
+          ))}
+          {/* Joining stays open for the whole choose phase, so the invite keeps showing. */}
+          <div className="rounded-xl border border-dashed border-primary-container/40 bg-primary-container/5 px-4 py-3 flex flex-col justify-center">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              Invite more
+            </p>
+            <p className="font-headline font-bold text-on-surface">
+              Share code {session.joinCode}
+            </p>
+            <p className="text-xs text-on-surface-variant mt-1">
+              {participantCount < 2
+                ? "You need at least one other person to start."
+                : "Anyone can still join until rating starts."}
+            </p>
           </div>
-        ) : null}
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-surface-container-lowest rounded-xl p-6 shadow-xs relative">

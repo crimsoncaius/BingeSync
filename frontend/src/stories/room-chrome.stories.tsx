@@ -18,7 +18,6 @@ export const ResultsWithChrome: Story = () => (
     copiedJoinCode={false}
     error={null}
     joinCode="BINGE1"
-    maxParticipants={8}
     onCopyCode={() => undefined}
     onLeave={() => undefined}
     onRefresh={() => undefined}
@@ -45,7 +44,6 @@ export const ChoosePhaseChrome: Story = () => (
     copiedJoinCode={false}
     error={null}
     joinCode="BINGE1"
-    maxParticipants={8}
     onCopyCode={() => undefined}
     onLeave={() => undefined}
     onRefresh={() => undefined}
@@ -70,7 +68,6 @@ export const ErrorBanner: Story = () => (
     copiedJoinCode={false}
     error="Could not reach the server. Check that the API is running."
     joinCode="BINGE1"
-    maxParticipants={8}
     onCopyCode={() => undefined}
     onLeave={() => undefined}
     onRefresh={() => undefined}

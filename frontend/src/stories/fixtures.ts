@@ -65,7 +65,6 @@ export function sessionCollecting(
     options: mockOptions,
     ratings: {},
     selectionDone: { [PARTICIPANT_YOU]: false, [PARTICIPANT_OTHER]: false },
-    maxParticipants: 8,
     isReadyForResults: false,
     usedGooglePlaceIds: ["ChIJmockPizza", "ChIJmockBurger"],
     title: "Friday Night Feast",
