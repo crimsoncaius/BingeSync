@@ -58,7 +58,7 @@ All HTTP JSON routes are mounted under the `/api` prefix (see **API surface**).
 
 ### Client responsibilities
 
-- Landing: create room (optional title, max participants, max picks per person) or join by code.
+- Landing: create room (optional title, search area, max picks per person) or join by code. Room size is not configurable.
 - **Choose** phase (`waiting` / `collecting`): add/remove own options; autocomplete from Places; mark “done choosing” when the private list is ready.
 - **Rate** phase: sliders `0–10` for every option in the combined pool; submit one batch per participant when complete.
 - **Results**: show ranked list once everyone has rated everything.
@@ -67,7 +67,7 @@ All HTTP JSON routes are mounted under the `/api` prefix (see **API surface**).
 ### Server responsibilities
 
 - Issue `sessionId`, `joinCode`, and `participantId` on create/join.
-- Enforce room capacity (`maxParticipants`, default 2, cap 10), join rules (closed during `rating` / `results`), and optional `maxPicksPerParticipant`.
+- Enforce join rules (closed during `rating` / `results`, and above the fixed `MAX_PARTICIPANTS_CAP` of 10) and optional `maxPicksPerParticipant`. Hosts do not choose a room size.
 - Store options, per-participant “selection done”, and ratings; derive `status` from that data.
 - Merge picks into one pool for rating; **while more than one person is in the room during choose**, each client only sees their own options in API responses until the room moves to rating (privacy for parallel picking).
 - Deduplicate by **Google Place ID** across the pool; allow duplicate display names per person via internal normalized-name disambiguation.
@@ -80,12 +80,12 @@ Derived `status` values:
 
 | Status        | Meaning |
 |---------------|---------|
-| `waiting`     | Room not full; still accepting joins. |
-| `collecting`  | Room full (or host chose >2 max); still in choose phase. |
+| `waiting`     | Fewer than 2 participants — the room cannot start yet. |
+| `collecting`  | 2 or more participants, still in choose phase. |
 | `rating`      | At least two participants, at least one option, everyone marked selection done — combined pool visible; ratings accepted. |
 | `results`     | Every participant has rated every option. |
 
-Minimum participants to leave `waiting` is 2. Moving to `rating` requires everyone currently in the room to have marked selection done (and each must have at least one option before marking done).
+Since rooms have no host-chosen capacity, the choose phase splits on **headcount**, not fullness: `waiting` means the room is still on its own, `collecting` means enough people are present to finish. Moving to `rating` requires everyone currently in the room to have marked selection done (and each must have at least one option before marking done). Joining stays open for the whole choose phase, up to a fixed server-side ceiling of 10 people.
 
 ## API surface
 
@@ -94,7 +94,7 @@ Base path: `/api`.
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Liveness. |
-| `POST` | `/sessions` | Create session; body may include `name`, `maxParticipants`, `title`, `maxPicksPerParticipant`. |
+| `POST` | `/sessions` | Create session; body may include `name`, `title`, `maxPicksPerParticipant`, and search-bias fields. |
 | `POST` | `/sessions/join` | Join by `joinCode` (+ optional `name`). |
 | `GET` | `/sessions/{sessionRef}` | Session snapshot; `sessionRef` may be `sessionId` or `joinCode`. Query `participantId` for viewer-scoped option list in choose phase. |
 | `GET` | `/sessions/{sessionId}/events` | SSE stream of session JSON; query `participantId` same as above. |
@@ -116,7 +116,7 @@ Session responses include roughly:
 - `options[]` — `id`, `name`, `addedBy`, optional Places fields (`address`, `googlePlaceId`, `rating`, `userRatingCount`, `priceLevel`, `phone`, `websiteUri`, `googleMapsUri`, `openNow`, `photoUrl`)
 - `ratings` — map `participantId` → `optionId` → integer score
 - `selectionDone` — map `participantId` → boolean
-- `maxParticipants`, `isReadyForResults`, `usedGooglePlaceIds`, optional `title`, `maxPicksPerParticipant`
+- `isReadyForResults`, `usedGooglePlaceIds`, optional `title`, `maxPicksPerParticipant`, `searchBias`
 
 There is no separate `expiresAt` field in the current store; sessions live until process restart.
 

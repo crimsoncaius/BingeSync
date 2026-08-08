@@ -6,7 +6,6 @@ import { LandingPage } from "../ui/LandingPage";
 function LandingPlayground() {
   const [userNameInput, setUserNameInput] = useState("Alex");
   const [joinCodeInput, setJoinCodeInput] = useState("ABC123");
-  const [hostMaxParticipants, setHostMaxParticipants] = useState(4);
   const [hostRoomTitle, setHostRoomTitle] = useState("Friday Night Feast");
   const [hostMaxPicksPerParticipant, setHostMaxPicksPerParticipant] = useState<
     number | null
@@ -28,7 +27,6 @@ function LandingPlayground() {
       hostAreaRef={hostAreaRef}
       hostAreaShowSuggestions={hostAreaShowSuggestions}
       hostAreaSuggestions={hostAreaSuggestions}
-      hostMaxParticipants={hostMaxParticipants}
       hostMaxPicksPerParticipant={hostMaxPicksPerParticipant}
       hostRoomTitle={hostRoomTitle}
       hostSearchBias={hostSearchBias}
@@ -46,7 +44,6 @@ function LandingPlayground() {
       pendingAction={null}
       setHostAreaInput={setHostAreaInput}
       setHostAreaShowSuggestions={setHostAreaShowSuggestions}
-      setHostMaxParticipants={setHostMaxParticipants}
       setHostMaxPicksPerParticipant={setHostMaxPicksPerParticipant}
       setHostRoomTitle={setHostRoomTitle}
       setJoinCodeInput={setJoinCodeInput}

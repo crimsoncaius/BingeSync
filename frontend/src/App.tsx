@@ -78,7 +78,6 @@ export default function App() {
   const [participantId, setParticipantId] = useState('')
   const [userNameInput, setUserNameInput] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
-  const [hostMaxParticipants, setHostMaxParticipants] = useState(2)
   const [hostRoomTitle, setHostRoomTitle] = useState('')
   const [hostMaxPicksPerParticipant, setHostMaxPicksPerParticipant] = useState<number | null>(5)
   const [optionInput, setOptionInput] = useState('')
@@ -344,7 +343,7 @@ export default function App() {
     try {
       setPendingAction('create')
       setError('')
-      const response = await createSession(userNameInput, hostMaxParticipants, {
+      const response = await createSession(userNameInput, {
         title: hostRoomTitle.trim() || null,
         maxPicksPerParticipant: hostMaxPicksPerParticipant,
         searchBias: hostSearchBias,
@@ -560,7 +559,6 @@ export default function App() {
         hostAreaRef={hostAreaRef}
         hostAreaShowSuggestions={hostAreaShowSuggestions}
         hostAreaSuggestions={hostAreaSuggestions}
-        hostMaxParticipants={hostMaxParticipants}
         hostMaxPicksPerParticipant={hostMaxPicksPerParticipant}
         hostRoomTitle={hostRoomTitle}
         hostSearchBias={hostSearchBias}
@@ -578,7 +576,6 @@ export default function App() {
         pendingAction={pendingAction}
         setHostAreaInput={setHostAreaInput}
         setHostAreaShowSuggestions={setHostAreaShowSuggestions}
-        setHostMaxParticipants={setHostMaxParticipants}
         setHostMaxPicksPerParticipant={setHostMaxPicksPerParticipant}
         setHostRoomTitle={setHostRoomTitle}
         setJoinCodeInput={setJoinCodeInput}
@@ -603,7 +600,6 @@ export default function App() {
       copiedJoinCode={copiedJoinCode}
       error={error || null}
       joinCode={session.joinCode}
-      maxParticipants={session.maxParticipants}
       roomTitle={session.title ?? null}
       searchAreaHint={session.searchBias?.label ?? null}
       onCopyCode={handleCopyJoinCode}

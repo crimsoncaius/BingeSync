@@ -5,7 +5,6 @@ import { ThemeToggle } from "../theme";
 export interface RoomChromeProps {
   joinCode: string;
   participantCount: number;
-  maxParticipants: number;
   /** Shown in the room sidebar / header when the host set an occasion title. */
   roomTitle?: string | null;
   /** Subline when the host set a map search bias (e.g. city). */
@@ -49,7 +48,6 @@ function Avatar({ label }: { label: string }) {
 export function RoomChrome({
   joinCode,
   participantCount,
-  maxParticipants,
   roomTitle,
   searchAreaHint,
   participantLabel,
@@ -115,7 +113,8 @@ export function RoomChrome({
               </p>
             ) : null}
             <p className="text-xs text-secondary-dim font-body mt-0.5">
-              Code: {joinCode} ({participantCount}/{maxParticipants} People)
+              Code: {joinCode} ({participantCount}{" "}
+              {participantCount === 1 ? "person" : "people"})
             </p>
           </div>
           <button
