@@ -193,7 +193,9 @@ export function ChoosePhase({
                     <div className="absolute left-0 right-0 top-full z-50 mt-1 bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/10 shadow-lg">
                       <div className="px-4 py-2 border-b border-outline-variant/10">
                         <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">
-                          Suggested nearby
+                          {session.searchBias
+                            ? `Suggestions favoring ${session.searchBias.label?.trim() || "the selected search area"}`
+                            : "Suggestions in Singapore"}
                         </span>
                       </div>
                       <div className="divide-y divide-outline-variant/10 max-h-64 overflow-y-auto no-scrollbar">
